@@ -163,17 +163,26 @@ const NetSuite={
     {sku:"RP-104",onHandFG:12,forecast:50,par:15},
     {sku:"RP-105",onHandFG:30,forecast:80,par:20},
   ],
+  // Standard landed cost per component, in $ per the component's UOM. Drives theoretical-vs-actual cost.
+  _costs:{
+    "RM-FLOUR":0.45,"RM-FLOUR-ALT":0.52,"RM-BUTTER":3.20,"RM-CHKN":2.80,"RM-CHKN-ALT":2.60,
+    "RM-VEGMIX":1.10,"RM-BEEF":4.50,"RM-BEEF-ALT":4.20,"RM-ONION":0.60,"RM-SPICE":8.00,
+    "RM-WRAP":0.05,"RM-SOY":1.50,"RM-TOMATO":0.40,"RM-OLIVEOIL":6.00,"RM-GARLIC":3.00,
+    "PK-TRAY10":0.12,"PK-BOX12":0.30,"PK-BOX20":0.35,"PK-JAR16":0.25,
+    "PK-CS12":0.40,"PK-TRAY2":0.15,"PK-BAG1":0.04,"PK-BAG5":0.08,"PK-TRAY1":0.10,
+  },
   getAssembly(sku){return this._assemblyComponents[sku]||null;},
   getInventory(sku){return this._inventory[sku]||{onHand:0,committed:0,lots:[]};},
   nameOf(sku){return this._names[sku]||sku;},
   allergensOf(sku){return this._allergens[sku]||[];},
+  costOf(sku){return this._costs[sku]||0;},
 };
 
 const REASONS=["Primary short / out of stock","Primary on QA hold","Cost / availability","Approved formula equivalent","Other"];
 const STAGES=[
   {n:1,k:"Stage 1",t:"Upload & Review"},{n:2,k:"Stage 2",t:"Availability & Subs"},
   {n:3,k:"Stage 3",t:"Lot Assignment"},{n:4,k:"Stage 4",t:"Print Order"},
-  {n:5,k:"Stage 5",t:"Results & QA Form"},{n:6,k:"Stage 6",t:"Finalize & Build"},
+  {n:5,k:"Stage 5",t:"Results & Usage"},{n:6,k:"Stage 6",t:"Finalize & Build"},
 ];
 const state={page:"forecast",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
   traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
@@ -260,7 +269,7 @@ function makeWO(o){SEQ++;const wo={id:"WO"+SEQ,ref:o.ref||"",sku:o.sku,name:o.na
   hasBom:true,stage:1,status:"Draft",source:o.source||"manual",
   substitutions:{},committed:false,lotAssignments:null,finishedLot:"",
   results:{actualQty:o.qty,shrinkQty:0},producedQty:0,partiallyBuilt:false,closedShort:false,builds:[],
-  signedForm:"",signedReceived:false,signedDate:"",resultsDoc:"",resultsDocDate:"",completed:false};
+  resultsDoc:"",resultsDocDate:"",usage:{},completed:false};
   state.workOrders.push(wo);return wo;}
 // Allergens for a finished-good SKU (aggregated from its BOM) — used in the Forecasting table.
 function skuAllergens(sku){const a=NetSuite.getAssembly(sku);if(!a)return[];const set=new Set();
@@ -452,13 +461,13 @@ function viewHistory(){const q=(state.historyQuery||"").trim();const ql=q.toLowe
     <div class="panel"><div class="row"><input class="txt" id="histInput" placeholder="e.g. WO1001 or PO-5001" value="${esc(q)}" style="width:300px">
       <button class="btn primary sm" id="histGo">Search</button>${q?`<button class="btn ghost sm" id="histClear">Clear</button>`:""}
       <span class="note" style="margin-left:auto">${list.length} of ${done.length}</span></div></div>
-    <div class="panel"><table><thead><tr><th>Production #</th><th>Finished good</th><th>Built / planned</th><th>Finished lot</th><th>Build date</th><th>QA form</th><th>Status</th><th></th></tr></thead>
+    <div class="panel"><table><thead><tr><th>Production #</th><th>Finished good</th><th>Built / planned</th><th>Finished lot</th><th>Build date</th><th>Yield</th><th>Status</th><th></th></tr></thead>
     <tbody>${list.length?list.map(w=>`<tr>
       <td><strong>${esc(w.id)}</strong><div class="note">${esc(w.ref)}</div></td>
       <td>${esc(w.name)}<div class="note">${esc(w.sku)}</div></td>
       <td>${w.producedQty} / ${w.qty} ${esc(w.uom)}</td>
       <td><code class="mono">${esc(w.finishedLot)}</code></td><td>${esc(w.buildDate)}</td>
-      <td>${w.signedReceived?'<span class="tag ok">received</span>':'<span class="tag warn">missing</span>'}</td>
+      <td>${w.qty?Math.round(w.producedQty/w.qty*100):0}%</td>
       <td>${statusTag(w)}</td><td><button class="btn ghost sm" data-open="${w.id}">View</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No matches.</td></tr>`}</tbody></table></div>`;}
 
 /* ---------- reports (daily / weekly production summary) ---------- */
@@ -475,9 +484,8 @@ function periodStats(from,to){const evs=[];
   const planned=round(wos.reduce((s,id)=>{const w=state.workOrders.find(x=>x.id===id);return s+(w?w.qty:0);},0),2);
   const onTime=evs.filter(e=>e.b.date<=e.w.buildDate).length;
   const subs=wos.filter(id=>{const w=state.workOrders.find(x=>x.id===id);return Object.keys(w.substitutions||{}).length;}).length;
-  const qaMissing=wos.filter(id=>{const w=state.workOrders.find(x=>x.id===id);return !w.signedReceived;}).length;
   const byItem={};evs.forEach(e=>{const k=e.w.sku;(byItem[k]=byItem[k]||{name:e.w.name,produced:0,batches:0,shrink:0});byItem[k].produced+=e.b.qty;byItem[k].batches++;byItem[k].shrink+=(+e.b.shrink||0);});
-  return{evs,produced,shrink,batches,planned,onTime,subs,qaMissing,wos,byItem};}
+  return{evs,produced,shrink,batches,planned,onTime,subs,wos,byItem};}
 function viewReports(){const any=producedWOs().length;const r=reportRange();const s=periodStats(r.from,r.to);
   const head=`<h2 class="page">Production Reports</h2><p class="sub">Daily &amp; weekly production summaries with key food-manufacturing KPIs.</p>`;
   const tabs=`<div class="panel"><div class="row" style="gap:6px">
@@ -507,8 +515,7 @@ function viewReports(){const any=producedWOs().length;const r=reportRange();cons
     `<div class="panel"><h3>Production by item — ${esc(r.label)}</h3>
       <table><thead><tr><th>Item</th><th>Batches</th><th>Produced</th><th>Scrap</th><th>Yield</th></tr></thead><tbody>${itemRows}</tbody></table></div>
      <div class="panel"><h3>Exceptions</h3>
-      <div class="row" style="margin-bottom:10px"><span class="tag ${s.subs?'sub':'neutral'}">${s.subs} substitution(s)</span>
-        <span class="tag ${s.qaMissing?'warn':'ok'}">${s.qaMissing} QA form(s) missing</span></div>
+      <div class="row" style="margin-bottom:10px"><span class="tag ${s.subs?'sub':'neutral'}">${s.subs} substitution(s)</span></div>
       ${subList?`<table><thead><tr><th>WO</th><th>Substitution</th><th>Reason</th></tr></thead><tbody>${subList}</tbody></table>`:'<div class="note">No substitutions in this period.</div>'}</div>`;}
 function downloadProdCSV(){const r=reportRange();const s=periodStats(r.from,r.to);
   const lines=["item,name,batches,produced,scrap,yield_pct"].concat(Object.entries(s.byItem).map(([sku,v])=>`${sku},"${v.name}",${v.batches},${round(v.produced,0)},${round(v.shrink,0)},${(v.produced+v.shrink)?round(v.produced/(v.produced+v.shrink)*100,1):0}`));
@@ -632,49 +639,102 @@ function stage4(wo){return `<div class="panel"><h3>4 · Print production order (
     <div class="row" style="margin-top:16px"><button class="btn primary" id="printPO">🖨 Print production order</button>
       <button class="btn ghost" data-adv="5">Enter results →</button><button class="btn ghost" data-adv="3">← Back</button></div></div>`;}
 
+// ---- component usage variance + landed cost: theoretical (standard × produced) vs actual ----
+function usageRows(wo){const made=round(+wo.results.actualQty||0,2);
+  return effectiveComponents(wo).map(c=>{const theo=round(c.qtyPer*made,2);
+    const actual=(wo.usage&&wo.usage[c.sku]!=null)?round(+wo.usage[c.sku],2):theo;
+    const variance=round(actual-theo,2);const pct=theo?round(variance/theo*100,1):0;
+    const cost=NetSuite.costOf(c.sku);const theoCost=round(theo*cost,2);const actCost=round(actual*cost,2);const costVar=round(actCost-theoCost,2);
+    return{sku:c.sku,name:c.name,uom:c.uom,qtyPer:c.qtyPer,theo,actual,variance,pct,flag:Math.abs(pct)>2,cost,theoCost,actCost,costVar};});}
+function yieldPct(wo){const made=(wo.producedQty||0)+(+wo.results.actualQty||0);return wo.qty?round(made/wo.qty*100,1):0;}
+function landedCost(wo){const uv=usageRows(wo);
+  const theo=round(uv.reduce((s,r)=>s+r.theoCost,0),2);const act=round(uv.reduce((s,r)=>s+r.actCost,0),2);
+  const variance=round(act-theo,2);const pct=theo?round(variance/theo*100,1):0;const made=round(+wo.results.actualQty||0,2);
+  return{theo,act,variance,pct,made,unitTheo:made?round(theo/made,2):0,unitAct:made?round(act/made,2):0};}
+function money(n){return (n<0?"-$":"$")+Math.abs(+n||0).toFixed(2);}
+function varianceTag(r){if(r.variance===0)return '<span class="tag neutral">on standard</span>';
+  const over=r.variance>0;const cls=over?(r.flag?'bad':'warn'):'ok';const sign=over?'+':'';
+  return `<span class="tag ${cls}">${sign}${r.variance} ${esc(r.uom)} · ${sign}${r.pct}%</span>`;}
+function costVarCell(r){if(r.costVar===0)return '<span class="note">$0.00</span>';
+  return `<span class="tag ${r.costVar>0?'warn':'ok'}">${r.costVar>0?'+':''}${money(r.costVar)}</span>`;}
+function usageTable(wo){const uv=usageRows(wo);const made=round(+wo.results.actualQty||0,2);
+  const overC=uv.filter(r=>r.variance>0).length,underC=uv.filter(r=>r.variance<0).length;
+  return `<div class="panel" style="background:var(--soft);margin-top:14px"><div class="spread" style="margin-bottom:8px">
+      <h3 style="margin:0">Component usage &amp; variance <span class="note" style="font-weight:400">— theoretical vs actual</span></h3>
+      <span class="note">${overC} over · ${underC} under standard</span></div>
+    <p class="note">Theoretical = recipe standard × produced this build (<strong>${made} ${esc(wo.uom)}</strong>). Enter the <strong>actual</strong> quantity consumed per component to capture usage and cost variance.</p>
+    <table><thead><tr><th>Component</th><th>Unit cost</th><th>Theoretical</th><th>Actual used</th><th>Qty variance</th><th>Cost variance</th></tr></thead>
+    <tbody>${uv.map(r=>`<tr><td>${esc(r.sku)}<div class="note">${esc(r.name)}</div></td>
+      <td>${money(r.cost)}/${esc(r.uom)}</td>
+      <td>${r.theo} ${esc(r.uom)}</td>
+      <td><input class="qtyinput" type="number" min="0" step="any" data-usage="${esc(r.sku)}" value="${r.actual}"></td>
+      <td>${varianceTag(r)}</td>
+      <td>${costVarCell(r)}</td></tr>`).join("")}</tbody></table>
+    <div class="note" style="margin-top:6px"><span class="tag warn">over</span> used more than standard · <span class="tag ok">under</span> used less · flagged <span class="tag bad">red</span> beyond ±2%.</div></div>`;}
+function landedCostPanel(wo){const lc=landedCost(wo);const y=yieldPct(wo);
+  const vcolor=lc.variance>0?'var(--bad)':(lc.variance<0?'var(--ok)':'inherit');
+  return `<div class="panel" style="margin-top:14px"><div class="spread" style="margin-bottom:10px">
+      <h3 style="margin:0">Landed cost &amp; yield <span class="note" style="font-weight:400">— theoretical vs actual</span></h3>
+      <button class="btn ghost sm" id="printCost">🖨 Print cost report</button></div>
+    <div class="cards">
+      <div class="card"><div class="n">${money(lc.theo)}</div><div class="l">Theoretical material cost</div></div>
+      <div class="card"><div class="n">${money(lc.act)}</div><div class="l">Actual material cost</div></div>
+      <div class="card"><div class="n" style="color:${vcolor}">${lc.variance>0?'+':''}${money(lc.variance)}</div><div class="l">Cost variance (${lc.variance>0?'+':''}${lc.pct}%)</div></div>
+      <div class="card brand"><div class="n">${money(lc.unitAct)}</div><div class="l">Actual landed cost / ${esc(wo.uom)}</div></div>
+      <div class="card"><div class="n">${y}%</div><div class="l">Yield</div></div></div>
+    <div class="note">Material landed cost only (component standard cost × usage). Labor &amp; overhead add on top in the live system. Yield = produced ÷ planned.</div></div>`;}
+function printCostReport(wo){const uv=usageRows(wo);const lc=landedCost(wo);const y=yieldPct(wo);
+  const rows=uv.map(r=>`<tr><td>${esc(r.sku)} — ${esc(r.name)}</td><td>${money(r.cost)}/${esc(r.uom)}</td><td>${r.theo}</td><td>${r.actual}</td><td>${r.variance>0?'+':''}${r.variance} (${r.variance>0?'+':''}${r.pct}%)</td><td>${money(r.theoCost)}</td><td>${money(r.actCost)}</td><td>${r.costVar>0?'+':''}${money(r.costVar)}</td></tr>`).join("");
+  const inner=`<h1>Vic's Foods — Production Cost &amp; Usage Variance</h1>
+    <div class="note">${esc(wo.id)} · ${esc(wo.name)} (${esc(wo.sku)}) · produced ${lc.made} ${esc(wo.uom)} · yield ${y}% · printed ${esc(today())}</div>
+    <table><thead><tr><th>Component</th><th>Unit cost</th><th>Theo qty</th><th>Actual qty</th><th>Qty variance</th><th>Theo cost</th><th>Actual cost</th><th>Cost var</th></tr></thead><tbody>${rows}</tbody></table>
+    <table style="margin-top:16px;max-width:460px"><tbody>
+      <tr><td>Theoretical material cost</td><td style="text-align:right"><strong>${money(lc.theo)}</strong></td></tr>
+      <tr><td>Actual material cost</td><td style="text-align:right"><strong>${money(lc.act)}</strong></td></tr>
+      <tr><td>Cost variance</td><td style="text-align:right"><strong>${lc.variance>0?'+':''}${money(lc.variance)} (${lc.variance>0?'+':''}${lc.pct}%)</strong></td></tr>
+      <tr><td>Actual landed cost / ${esc(wo.uom)}</td><td style="text-align:right"><strong>${money(lc.unitAct)}</strong></td></tr>
+      <tr><td>Yield</td><td style="text-align:right"><strong>${y}%</strong></td></tr></tbody></table>`;
+  printDoc("Production Cost Report",inner);}
 function stage5(wo){const r=wo.results;const already=wo.producedQty||0;const remaining=round(wo.qty-already,2);
   const yld=wo.qty?(already+(+r.actualQty||0))/wo.qty*100:0;
-  return `<div class="panel"><h3>5 · Production results &amp; signed QA form</h3>
+  return `<div class="panel"><h3>5 · Production results &amp; component usage</h3>
     ${already>0?`<div class="banner info">Partial production: <strong>${already}</strong> of ${wo.qty} ${esc(wo.uom)} already built · <strong>${remaining}</strong> remaining.</div>`:""}
-    <div class="row" style="gap:24px;align-items:flex-start;flex-wrap:wrap">
-      <div style="min-width:260px"><table>
-        <tr><td>Planned quantity</td><td><strong>${wo.qty} ${esc(wo.uom)}</strong></td></tr>
-        ${already>0?`<tr><td>Already built</td><td>${already} ${esc(wo.uom)}</td></tr>`:""}
-        <tr><td>Produced <strong>this build</strong></td><td><input class="qtyinput" type="number" id="actualQty" value="${r.actualQty}"></td></tr>
-        <tr><td>Shrink / scrap</td><td><input class="qtyinput" type="number" id="shrinkQty" value="${r.shrinkQty}"></td></tr>
-        <tr><td>Cumulative yield</td><td><strong>${round(yld,1)}%</strong></td></tr></table>
-        <div class="note" style="margin-top:8px">Yield recalculates automatically as you enter quantities.</div></div>
-      <div style="min-width:280px"><div class="panel" style="background:var(--soft)"><h3>Signed production form</h3>
-        <p class="note">Upload the completed/signed copy from the floor. On finalize this attaches to the Assembly Build and sets <strong>"Signed Copy Received"</strong> in NetSuite.</p>
-        <div class="drop" id="formDrop" style="padding:20px"><p style="margin:0">📄 ${wo.signedForm?esc(wo.signedForm):"Drop or click to upload signed form (PDF/JPG)"}</p>
-          <input type="file" id="formFile" style="display:none"></div>
-        ${wo.signedReceived?`<div class="banner ok" style="margin-top:10px">✓ Signed copy received ${esc(wo.signedDate)}</div>`:""}</div></div></div>
+    <div style="max-width:360px"><table>
+      <tr><td>Planned quantity</td><td><strong>${wo.qty} ${esc(wo.uom)}</strong></td></tr>
+      ${already>0?`<tr><td>Already built</td><td>${already} ${esc(wo.uom)}</td></tr>`:""}
+      <tr><td>Produced <strong>this build</strong></td><td><input class="qtyinput" type="number" id="actualQty" value="${r.actualQty}"></td></tr>
+      <tr><td>Shrink / scrap</td><td><input class="qtyinput" type="number" id="shrinkQty" value="${r.shrinkQty}"></td></tr>
+      <tr><td>Cumulative yield</td><td><strong>${round(yld,1)}%</strong></td></tr></table>
+      <div class="note" style="margin-top:8px">Yield and theoretical usage recalculate automatically as you enter quantities.</div></div>
+    ${usageTable(wo)}
+    ${landedCostPanel(wo)}
     <div class="row" style="margin-top:8px"><button class="btn primary" data-adv="6">Finalize &amp; process build →</button><button class="btn ghost" data-adv="4">← Back</button></div></div>`;}
 
 function stage6(wo){const r=wo.results;const already=wo.producedQty||0;const thisB=round(+r.actualQty||0,2);const after=round(already+thisB,2);const remaining=round(wo.qty-after,2);
   const lotLines=Object.entries(wo.lotAssignments||{}).flatMap(([sku,a])=>a.picks.map(p=>`${sku}: ${p.lot} (${p.qty})`));
   const subs=Object.entries(wo.substitutions||{}).map(([o,s])=>`${o} → ${s.sku} (${s.reason})`);
+  const uv=usageRows(wo);const vOver=uv.filter(x=>x.variance>0).length;const vUnder=uv.filter(x=>x.variance<0).length;
   const summary=`<div class="kv" style="max-width:560px">
       <b>Finished good</b><span>${esc(wo.name)} (${esc(wo.sku)})</span>
       <b>Finished lot</b><span><code class="mono">${esc(wo.finishedLot)}</code></span>
       <b>Consumed lots</b><span>${lotLines.map(esc).join("<br>")||"—"}</span>
       <b>Substitutions</b><span>${subs.length?subs.map(esc).join("<br>"):"none"}</span>
-      <b>Signed QA form</b><span>${wo.signedReceived?`✓ ${esc(wo.signedForm)} (${esc(wo.signedDate)})`:'<span class="tag warn">not received</span>'}</span>
+      <b>Component variance</b><span>${(vOver+vUnder)?`${vOver} over / ${vUnder} under standard`:"all on standard"}</span>
       <b>Production results</b><span>${wo.resultsDoc?`✓ ${esc(wo.resultsDoc)} (${esc(wo.resultsDocDate)})`:'<span class="tag warn">not attached</span>'}</span></div>`;
   if(wo.completed)return `<div class="panel"><h3>6 · Build complete</h3>
     <div class="banner ok">✓ Build posted to NetSuite (mock). ${wo.closedShort?`Closed short at ${wo.producedQty} of ${wo.qty} ${esc(wo.uom)}.`:`Finished lot <code class="mono">${esc(wo.finishedLot)}</code> received (${wo.producedQty} ${esc(wo.uom)}).`}</div>
-    ${summary}${buildsTable(wo)}<div class="row" style="margin-top:12px"><button class="btn primary" data-go="dashboard">Done — back to dashboard</button></div></div>`;
+    ${summary}${landedCostPanel(wo)}${buildsTable(wo)}<div class="row" style="margin-top:12px"><button class="btn primary" data-go="dashboard">Done — back to dashboard</button></div></div>`;
   // open WO: either first build, or partially built awaiting more
   if(wo.partiallyBuilt)return `<div class="panel"><h3>6 · Partial build recorded</h3>
     <div class="banner warn">Partially built: <strong>${already}</strong> of ${wo.qty} ${esc(wo.uom)} · <strong>${remaining}</strong> remaining. The work order stays open until closed.</div>
-    ${summary}${buildsTable(wo)}${resultsDocBlock(wo)}<div class="row" style="margin-top:12px">
+    ${summary}${landedCostPanel(wo)}${buildsTable(wo)}${resultsDocBlock(wo)}<div class="row" style="margin-top:12px">
       <button class="btn primary" id="buildMore">+ Record another build (${remaining} ${esc(wo.uom)})</button>
       <button class="btn ghost" id="markDoneWO">✓ Mark complete (accept ${already} as final)</button>
       <button class="btn ghost" id="closeShort">Close short</button></div></div>`;
   return `<div class="panel"><h3>6 · Finalize &amp; process build</h3>
     <div class="banner info">Producing <strong>${thisB}</strong> ${esc(wo.uom)} this build${remaining>0?` (planned ${wo.qty}; ${remaining} would remain after).`:` — completes the work order.`} Posting consumes component lots and receives the finished lot.</div>
-    ${summary}${resultsDocBlock(wo)}
-    <div class="banner info" style="margin-top:14px">On finalize (live): <code class="mono">assemblybuild</code> created · component lots consumed · <strong>Signed Copy Received</strong> set via API · results document attached via the browser connector.</div>
+    ${summary}${landedCostPanel(wo)}${resultsDocBlock(wo)}
+    <div class="banner info" style="margin-top:14px">On finalize (live): <code class="mono">assemblybuild</code> created · component lots consumed at <strong>actual quantities</strong> · usage &amp; cost variance recorded · results document attached via the browser connector.</div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="processBuild">✓ Process this build</button><button class="btn ghost" data-adv="5">← Back</button></div></div>`;}
 // Optional results-document attachment shown when finalizing / marking complete.
 function resultsDocBlock(wo){return `<div class="panel" style="background:var(--soft);margin-top:12px"><h3>Production results document <span class="note" style="font-weight:400">(optional)</span></h3>
@@ -802,9 +862,9 @@ function wire(){
   // stage5/6 — yield updates automatically on field change (no button needed)
   const actualQty=document.getElementById("actualQty");if(actualQty)actualQty.onchange=()=>{const wo=getWO();wo.results.actualQty=+actualQty.value||0;render();};
   const shrinkQty=document.getElementById("shrinkQty");if(shrinkQty)shrinkQty.onchange=()=>{const wo=getWO();wo.results.shrinkQty=+shrinkQty.value||0;render();};
-  const formDrop=document.getElementById("formDrop"),formFile=document.getElementById("formFile");
-  if(formDrop){formDrop.onclick=()=>formFile.click();
-    formFile.onchange=e=>{const f=e.target.files[0];if(f){const wo=getWO();wo.signedForm=f.name;wo.signedReceived=true;wo.signedDate=today();toast("Signed form attached");render();}};}
+  // component actual usage (live variance + landed cost) and cost-report print
+  document.querySelectorAll("[data-usage]").forEach(inp=>inp.onchange=()=>{const wo=getWO();(wo.usage=wo.usage||{})[inp.dataset.usage]=Math.max(0,round(+inp.value||0,2));render();});
+  const printCost=document.getElementById("printCost");if(printCost)printCost.onclick=()=>printCostReport(getWO());
   // production results document (attach when finalizing / marking complete)
   const resultsDrop=document.getElementById("resultsDrop"),resultsFile=document.getElementById("resultsFile");
   if(resultsDrop){resultsDrop.onclick=()=>resultsFile.click();
