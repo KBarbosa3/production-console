@@ -14,6 +14,8 @@
   .logo{width:34px;height:34px;border-radius:8px;background:var(--brand);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff}
   .topbar h1{font-size:16px;margin:0;font-weight:600}
   .topbar .env{margin-left:auto;font-size:12px;color:#cbd5e1;background:#1e293b;padding:5px 10px;border-radius:999px}
+  .titlewrap{display:flex;flex-direction:column;gap:3px}
+  .modesel{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:7px;padding:3px 8px;font-size:12px;cursor:pointer}
   .layout{display:flex;min-height:calc(100vh - 62px)}
   nav.side{width:220px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
   nav.side button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;text-align:left;padding:11px 12px;border-radius:9px;font-size:14px;color:#334155;cursor:pointer;margin-bottom:3px}
@@ -70,7 +72,11 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="logo">VF</div><h1>Production Console</h1>
+<header class="topbar"><div class="logo">VF</div>
+  <div class="titlewrap"><h1>Production Console</h1>
+    <select id="modeSel" class="modesel" title="Switch production line">
+      <option value="repack">Repack Production</option>
+      <option value="bakery">Bakery Production</option></select></div>
   <span class="env">Prototype · mock NetSuite · Vic's Foods (sub 5)</span></header>
 <div class="layout"><nav class="side" id="nav"></nav><main id="main"></main></div>
 <div class="toast" id="toast"></div>
@@ -158,11 +164,11 @@ const NetSuite={
   // Repack-department planning data: finished-good on-hand, period demand forecast, par/safety stock,
   // and units sold in the last 90 days (drives average daily sales → days on hand).
   _repackItems:[
-    {sku:"RP-101",onHandFG:8,forecast:30,par:6,sales90:180,cls:"Retail",category:"Sauce",department:"Repack",size:"16oz",pack:"12/cs"},
-    {sku:"RP-102",onHandFG:25,forecast:90,par:20,sales90:450,cls:"Retail",category:"Protein",department:"Repack",size:"2lb",pack:"Tray"},
-    {sku:"RP-103",onHandFG:60,forecast:150,par:40,sales90:540,cls:"Retail",category:"Produce",department:"Repack",size:"1lb",pack:"Bag"},
-    {sku:"RP-104",onHandFG:12,forecast:50,par:15,sales90:900,cls:"Retail",category:"Dry Goods",department:"Repack",size:"5lb",pack:"Bag"},
-    {sku:"RP-105",onHandFG:30,forecast:80,par:20,sales90:270,cls:"Retail",category:"Protein",department:"Repack",size:"1lb",pack:"Tray"},
+    {sku:"RP-101",onHandFG:8,forecast:30,par:6,sales90:180,sales30:70,salesPrev30:55,cls:"Retail",category:"Sauce",department:"Repack",size:"16oz",pack:"12/cs"},
+    {sku:"RP-102",onHandFG:25,forecast:90,par:20,sales90:450,sales30:170,salesPrev30:150,cls:"Retail",category:"Protein",department:"Repack",size:"2lb",pack:"Tray"},
+    {sku:"RP-103",onHandFG:60,forecast:150,par:40,sales90:540,sales30:160,salesPrev30:190,cls:"Retail",category:"Produce",department:"Repack",size:"1lb",pack:"Bag"},
+    {sku:"RP-104",onHandFG:12,forecast:50,par:15,sales90:900,sales30:340,salesPrev30:300,cls:"Retail",category:"Dry Goods",department:"Repack",size:"5lb",pack:"Bag"},
+    {sku:"RP-105",onHandFG:30,forecast:80,par:20,sales90:270,sales30:85,salesPrev30:95,cls:"Retail",category:"Protein",department:"Repack",size:"1lb",pack:"Tray"},
   ],
   // Standard labor hours per finished unit, plus shop labor rate and overhead rate ($/labor hour).
   _labor:{"FG-1001":0.05,"FG-1002":0.08,"FG-1003":0.06,"FG-1004":0.02,
@@ -190,7 +196,7 @@ const STAGES=[
   {n:3,k:"Stage 3",t:"Lot Assignment"},{n:4,k:"Stage 4",t:"Print Order"},
   {n:5,k:"Stage 5",t:"Results & Usage"},{n:6,k:"Stage 6",t:"Finalize & Build"},
 ];
-const state={page:"forecast",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
+const state={page:"forecast",mode:"repack",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
   traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
   savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcFilters:[],
   prefs:{positions:[{name:"Line Operator",rate:18},{name:"Packer",rate:16},{name:"Supervisor",rate:26}],stdRate:18,ohRate:12}};
@@ -298,10 +304,20 @@ function ingestUpload(rows){const errors=[];let ok=0;
 function repackRows(){return NetSuite._repackItems.map(it=>{const a=NetSuite.getAssembly(it.sku)||{name:it.sku,uom:"EA"};
   const suggested=Math.max(0,Math.round(it.forecast+it.par-it.onHandFG));
   const avgDaily=round((it.sales90||0)/90,2);const days=avgDaily>0?round(it.onHandFG/avgDaily,1):null;
-  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par,avgDaily,days};});}
+  // On order = open (not-yet-completed) work-order quantity still to build for this item.
+  const onOrder=Math.round(state.workOrders.filter(w=>w.sku===it.sku&&!w.completed).reduce((s,w)=>s+Math.max(0,(w.qty||0)-(w.producedQty||0)),0));
+  const net=Math.max(0,Math.round(it.forecast-it.onHandFG-onOrder));
+  const trend=it.salesPrev30?Math.round((it.sales30-it.salesPrev30)/it.salesPrev30*100):null;
+  const stockout=(days!=null&&isFinite(days))?dPlus(Math.floor(days)):null;
+  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par,avgDaily,days,onOrder,net,trend,stockout};});}
 // Days-on-hand chip: red under 3 days, amber under 7, green otherwise.
 function daysTag(r){if(r.days==null)return '<span class="note">—</span>';
   const cls=r.days<3?'bad':(r.days<7?'warn':'ok');return `<span class="tag ${cls}">${r.days} d</span>`;}
+// Projected stockout date (colored by urgency) and 30-day sales trend arrow.
+function stockoutCell(r){if(r.stockout==null)return '<span class="note">—</span>';
+  const cls=r.days<3?'bad':(r.days<7?'warn':'neutral');return `<span class="tag ${cls}">${esc(r.stockout)}</span>`;}
+function trendTag(r){if(r.trend==null)return '<span class="note">—</span>';const up=r.trend>0,dn=r.trend<0;
+  return `<span style="color:${up?'var(--ok)':(dn?'var(--bad)':'var(--muted)')};font-weight:600">${up?'▲':(dn?'▼':'■')} ${Math.abs(r.trend)}%</span>`;}
 function fcQtyFor(it){return state.fcQty[it.sku]!=null?state.fcQty[it.sku]:it.suggested;}
 function sendToProduction(){const date=state.fcDate||dPlus(1);const sel=state.fcSelected.slice();if(!sel.length)return;
   const rows=repackRows();let n=0;
@@ -420,6 +436,7 @@ function viewDashboard(){const w=state.workOrders;
 // stackable forecast filters: each row is {field, op, value}; rows AND together.
 const FC_FIELDS=[{k:"daysOnHand",l:"Days on hand",type:"num"},{k:"onHandFG",l:"On-hand FG",type:"num"},
   {k:"forecast",l:"Forecast",type:"num"},{k:"par",l:"Par",type:"num"},{k:"suggested",l:"Suggested",type:"num"},{k:"avgDaily",l:"Avg daily sales",type:"num"},
+  {k:"onOrder",l:"On order",type:"num"},{k:"net",l:"Net requirement",type:"num"},{k:"trend",l:"Sales trend %",type:"num"},
   {k:"cls",l:"Class",type:"text"},{k:"category",l:"Item category",type:"text"},{k:"department",l:"Department",type:"text"},{k:"size",l:"Size",type:"text"},{k:"pack",l:"Pack",type:"text"}];
 const FC_OPS_NUM=["<","<=","=",">=",">"];const FC_OPS_TEXT=["is","is not","contains"];
 function fcFieldDef(k){return FC_FIELDS.find(f=>f.k===k)||FC_FIELDS[0];}
@@ -429,7 +446,13 @@ function fcMatch(r,f){const def=fcFieldDef(f.field);
     if(f.op==="is")return v===t;if(f.op==="is not")return v!==t;if(f.op==="contains")return v.includes(t);return true;}
   const t=parseFloat(f.value);if(isNaN(t))return true;const v=fcFieldVal(r,f.field);
   switch(f.op){case"<":return v<t;case"<=":return v<=t;case"=":return v===t;case">=":return v>=t;case">":return v>t;}return true;}
-function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1);const filters=state.fcFilters;
+function viewForecast(){
+  if(state.mode==="bakery")return `<h2 class="page">Forecasting &amp; Planning — Bakery Production</h2>
+    <p class="sub">Bakery line planning.</p>
+    <div class="panel"><div class="empty">🥖 <strong>Bakery Production forecasting is in development.</strong><br><br>
+    The planning view for bakery will differ from repack — e.g. recipe scaling, mix / proof / bake scheduling, and shelf-life windows.<br><br>
+    <button class="btn ghost" data-mode="repack">← Switch to Repack Production</button></div></div>`;
+  const all=repackRows();const date=state.fcDate||dPlus(1);const filters=state.fcFilters;
   const rows=all.filter(r=>filters.every(f=>fcMatch(r,f)));
   const belowPar=all.filter(r=>r.belowPar).length;const totalForecast=all.reduce((s,r)=>s+r.forecast,0);
   const lowStock=all.filter(r=>r.days!=null&&r.days<7).length;
@@ -465,19 +488,21 @@ function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1)
         <input type="date" class="txt" id="fcDate" value="${esc(date)}">
         <button class="btn primary sm" id="fcSend" ${selRows.length?'':'disabled'}>➕ Send ${selRows.length||''} to Production →</button>
         <span class="note" style="margin-left:auto">${selRows.length} selected · ${selUnits.toLocaleString()} units</span></div>
-      <table><thead><tr>
+      <div style="overflow-x:auto"><table><thead><tr>
         <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all shown"></th>
-        <th>Item</th><th>Allergens</th><th>On-hand FG</th><th>Avg/day</th><th>Days on hand</th><th>Forecast</th><th>Par</th><th>Suggested</th><th>Build qty</th></tr></thead>
+        <th>Item</th><th>On-hand FG</th><th>On order</th><th>Avg/day</th><th>Days on hand</th><th>Stockout</th><th>Trend 30d</th><th>Forecast</th><th>Par</th><th>Net req</th><th>Suggested</th><th>Build qty</th></tr></thead>
       <tbody>${rows.length?rows.map(r=>`<tr>
         <td><input type="checkbox" data-fcrow="${r.sku}" ${state.fcSelected.includes(r.sku)?'checked':''}></td>
         <td><strong>${esc(r.sku)}</strong><div class="note">${esc(r.name)}</div></td>
-        <td>${allergenTags(r.allergens)}</td>
         <td>${r.onHandFG} ${esc(r.uom)} ${r.belowPar?'<span class="tag warn">below par</span>':''}</td>
+        <td>${r.onOrder||0}</td>
         <td>${r.avgDaily}/day</td>
         <td>${daysTag(r)}</td>
-        <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.suggested}</strong></td>
+        <td>${stockoutCell(r)}</td>
+        <td>${trendTag(r)}</td>
+        <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.net}</strong></td><td><strong>${r.suggested}</strong></td>
         <td><input class="qtyinput" type="number" min="0" data-fcqty="${r.sku}" value="${fcQtyFor(r)}"></td>
-      </tr>`).join(""):`<tr><td colspan="10" class="empty">No items match the current filters.</td></tr>`}</tbody></table>
+      </tr>`).join(""):`<tr><td colspan="13" class="empty">No items match the current filters.</td></tr>`}</tbody></table></div>
       <div class="note" style="margin-top:8px">Days on hand = on-hand ÷ average daily sales (last 90 days). Suggested build = forecast + par − on-hand.</div></div>`;}
 
 /* ---------- settings ---------- */
@@ -864,6 +889,8 @@ function printSchedule(){const w=state.workOrders.filter(inDateFilter);const f=s
 
 /* ---------- wiring ---------- */
 function wire(){
+  const modeSel=document.getElementById("modeSel");if(modeSel){modeSel.value=state.mode;modeSel.onchange=()=>{state.mode=modeSel.value;render();};}
+  document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{state.mode=b.dataset.mode;render();});
   document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
   document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openWO(b.dataset.open));
   document.querySelectorAll("[data-adv]").forEach(b=>b.onclick=()=>advance(+b.dataset.adv));
