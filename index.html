@@ -329,6 +329,7 @@ function viewDashboard(){const w=state.workOrders;
   const open=w.filter(x=>!x.completed).length;const partial=w.filter(x=>x.partiallyBuilt&&!x.completed).length;
   const produced=round(w.reduce((n,x)=>n+x.producedQty,0),0);const builtFull=w.filter(x=>x.completed&&!x.closedShort).length;
   const subRate=w.length?Math.round(w.filter(x=>Object.keys(x.substitutions||{}).length).length/w.length*100):0;
+  const completionRate=w.length?Math.round(w.filter(x=>x.completed).length/w.length*100):0;
   const f=state.dateFilter;const list=w.filter(inDateFilter);
   const fbtn=(mode,label)=>`<button class="btn ${f.mode===mode?'primary':'ghost'} sm" data-filter="${mode}">${label}</button>`;
   const range=f.mode==="custom"?`<span class="row" style="gap:6px"><input type="date" class="txt" id="fFrom" value="${esc(f.from)}">
@@ -352,6 +353,7 @@ function viewDashboard(){const w=state.workOrders;
       <div class="card"><div class="n">${partial}</div><div class="l">Partially built</div></div>
       <div class="card"><div class="n">${produced.toLocaleString()}</div><div class="l">Units produced</div></div>
       <div class="card"><div class="n">${builtFull}</div><div class="l">Fully built</div></div>
+      <div class="card"><div class="n">${completionRate}%</div><div class="l">Completion rate</div></div>
       <div class="card"><div class="n">${subRate}%</div><div class="l">Substitution rate</div></div></div>
     <div class="panel"><div class="spread" style="margin-bottom:12px"><h3 style="margin:0">Work orders</h3>
       <div class="row" style="gap:6px">
@@ -559,11 +561,11 @@ function stage1(wo){const comps=explode(wo);const allerg=woAllergens(wo);
   return `<div class="panel"><h3>1 · Review work order &amp; required components</h3>
     <div class="banner info">Components are pulled from the <strong>assembly item record</strong> (${esc(wo.sku)}) and scaled to the build quantity.</div>
     <div class="banner ${allerg.length?'warn':'ok'}">${allerg.length?`⚠ <strong>Contains:</strong> ${allergenTags(allerg)} — verify line is cleared for these allergens and schedule changeover/sanitation if the prior run differs.`:'✓ No declared allergens in this formula.'}</div>
-    <div class="row" style="margin-bottom:14px;gap:16px;align-items:flex-end">
+    <div class="row" style="margin-bottom:4px;gap:16px;align-items:flex-end">
       <div><div class="note">Build quantity</div><input class="qtyinput" type="number" id="woQty" value="${wo.qty}"></div>
       <div><div class="note">Build date</div><input class="txt" type="date" id="woDate" value="${esc(wo.buildDate)}"></div>
-      <div><div class="note">Location</div><input class="txt" id="woLoc" value="${esc(wo.location)}"></div>
-      <button class="btn ghost sm" id="woUpdate">Update &amp; rescale</button></div>
+      <div><div class="note">Location</div><input class="txt" id="woLoc" value="${esc(wo.location)}"></div></div>
+    <div class="note" style="margin-bottom:14px">Components rescale automatically when you change the build quantity.</div>
     <table><thead><tr><th>Component</th><th>Description</th><th>Per unit</th><th>Required</th><th>Allergens</th></tr></thead>
     <tbody>${comps.map(c=>`<tr><td>${esc(c.sku)}</td><td>${esc(c.name)}</td><td>${c.qtyPer} ${esc(c.uom)}/unit</td><td><strong>${c.required} ${esc(c.uom)}</strong></td><td>${allergenTags(NetSuite.allergensOf(c.sku))}</td></tr>`).join("")}</tbody></table>
     <div class="row" style="margin-top:16px"><button class="btn primary" data-adv="2">Check availability →</button></div></div>`;}
@@ -641,7 +643,7 @@ function stage5(wo){const r=wo.results;const already=wo.producedQty||0;const rem
         <tr><td>Produced <strong>this build</strong></td><td><input class="qtyinput" type="number" id="actualQty" value="${r.actualQty}"></td></tr>
         <tr><td>Shrink / scrap</td><td><input class="qtyinput" type="number" id="shrinkQty" value="${r.shrinkQty}"></td></tr>
         <tr><td>Cumulative yield</td><td><strong>${round(yld,1)}%</strong></td></tr></table>
-        <button class="btn ghost sm" id="recalc" style="margin-top:8px">↻ Update</button></div>
+        <div class="note" style="margin-top:8px">Yield recalculates automatically as you enter quantities.</div></div>
       <div style="min-width:280px"><div class="panel" style="background:var(--soft)"><h3>Signed production form</h3>
         <p class="note">Upload the completed/signed copy from the floor. On finalize this attaches to the Assembly Build and sets <strong>"Signed Copy Received"</strong> in NetSuite.</p>
         <div class="drop" id="formDrop" style="padding:20px"><p style="margin:0">📄 ${wo.signedForm?esc(wo.signedForm):"Drop or click to upload signed form (PDF/JPG)"}</p>
@@ -786,10 +788,10 @@ function wire(){
   document.querySelectorAll("[data-lotadd]").forEach(b=>b.onclick=()=>{const wo=getWO();const c=b.dataset.lotadd;const o=lotsFor(c)[0]||{lot:"",expiry:"",qty:0};
     (wo.lotAssignments[c]=wo.lotAssignments[c]||{picks:[]}).picks.push({lot:o.lot,expiry:o.expiry,qty:0});render();});
 
-  // stage1 edit
-  const woUpdate=document.getElementById("woUpdate");if(woUpdate)woUpdate.onclick=()=>{const wo=getWO();
-    wo.qty=+document.getElementById("woQty").value||0;wo.buildDate=document.getElementById("woDate").value||wo.buildDate;
-    wo.location=document.getElementById("woLoc").value||wo.location;wo.lotAssignments=null;wo.finishedLot=genLotCode(wo);wo.results.actualQty=wo.qty;toast("Work order updated");render();};
+  // stage1 edit — apply automatically when a field changes (no button needed)
+  const woQty=document.getElementById("woQty");if(woQty)woQty.onchange=()=>{const wo=getWO();wo.qty=+woQty.value||0;wo.lotAssignments=null;wo.results.actualQty=wo.qty;render();};
+  const woDate=document.getElementById("woDate");if(woDate)woDate.onchange=()=>{const wo=getWO();wo.buildDate=woDate.value||wo.buildDate;wo.finishedLot=genLotCode(wo);render();};
+  const woLoc=document.getElementById("woLoc");if(woLoc)woLoc.onchange=()=>{const wo=getWO();wo.location=woLoc.value||wo.location;render();};
 
   // stage3
   const refefo=document.getElementById("refefo");if(refefo)refefo.onclick=()=>{fefoAssign(getWO());render();};
@@ -797,9 +799,9 @@ function wire(){
   const resetLot=document.getElementById("resetLot");if(resetLot)resetLot.onclick=()=>{const wo=getWO();wo.finishedLot=genLotCode(wo);render();};
   const printPO=document.getElementById("printPO");if(printPO)printPO.onclick=()=>printTraveler(getWO());
 
-  // stage5/6
-  const recalc=document.getElementById("recalc");if(recalc)recalc.onclick=()=>{const wo=getWO();
-    wo.results.actualQty=+document.getElementById("actualQty").value||0;wo.results.shrinkQty=+document.getElementById("shrinkQty").value||0;render();};
+  // stage5/6 — yield updates automatically on field change (no button needed)
+  const actualQty=document.getElementById("actualQty");if(actualQty)actualQty.onchange=()=>{const wo=getWO();wo.results.actualQty=+actualQty.value||0;render();};
+  const shrinkQty=document.getElementById("shrinkQty");if(shrinkQty)shrinkQty.onchange=()=>{const wo=getWO();wo.results.shrinkQty=+shrinkQty.value||0;render();};
   const formDrop=document.getElementById("formDrop"),formFile=document.getElementById("formFile");
   if(formDrop){formDrop.onclick=()=>formFile.click();
     formFile.onchange=e=>{const f=e.target.files[0];if(f){const wo=getWO();wo.signedForm=f.name;wo.signedReceived=true;wo.signedDate=today();toast("Signed form attached");render();}};}
