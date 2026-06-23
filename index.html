@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vic's Foods — Production Console (Prototype)</title>
+<style>
+  :root{--bg:#0f172a;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--brand:#c0392b;--brand-dark:#9b2d20;
+    --ok:#16a34a;--okbg:#dcfce7;--warn:#d97706;--warnbg:#fef3c7;--bad:#dc2626;--badbg:#fee2e2;
+    --soft:#f8fafc;--info:#3730a3;--infobg:#eef2ff;--sub:#0e7490;--subbg:#cffafe;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--soft)}
+  header.topbar{background:var(--bg);color:#fff;display:flex;align-items:center;gap:14px;padding:14px 22px;position:sticky;top:0;z-index:10}
+  .logo{width:34px;height:34px;border-radius:8px;background:var(--brand);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff}
+  .topbar h1{font-size:16px;margin:0;font-weight:600}
+  .topbar .env{margin-left:auto;font-size:12px;color:#cbd5e1;background:#1e293b;padding:5px 10px;border-radius:999px}
+  .layout{display:flex;min-height:calc(100vh - 62px)}
+  nav.side{width:220px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
+  nav.side button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;text-align:left;padding:11px 12px;border-radius:9px;font-size:14px;color:#334155;cursor:pointer;margin-bottom:3px}
+  nav.side button .badge{margin-left:auto;background:var(--line);color:#475569;border-radius:999px;font-size:11px;padding:1px 8px}
+  nav.side button:hover{background:var(--soft)}
+  nav.side button.active{background:#fef2f1;color:var(--brand-dark);font-weight:600}
+  nav.side button.active .badge{background:var(--brand);color:#fff}
+  main{flex:1;padding:24px 30px;max-width:1080px}
+  h2.page{margin:0 0 4px;font-size:22px}.sub{color:var(--muted);font-size:14px;margin:0 0 20px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:24px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px}
+  .card .n{font-size:24px;font-weight:700}.card .l{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .card.brand{border-left:4px solid var(--brand)}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+  .panel h3{margin:0 0 14px;font-size:15px}
+  .btn{border:0;border-radius:9px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  .btn.primary{background:var(--brand);color:#fff}.btn.primary:hover{background:var(--brand-dark)}
+  .btn.primary:disabled{background:#e2a8a1;cursor:not-allowed}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:#334155}.btn.ghost:hover{background:var(--soft)}
+  .btn.sm{padding:6px 12px;font-size:13px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .spread{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .drop{border:2px dashed #cbd5e1;border-radius:14px;padding:32px;text-align:center;color:var(--muted);cursor:pointer;background:var(--soft)}
+  .drop.drag{border-color:var(--brand);background:#fef2f1}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  tbody tr:hover{background:var(--soft)}
+  .tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
+  .tag.ok{background:var(--okbg);color:var(--ok)}.tag.warn{background:var(--warnbg);color:var(--warn)}
+  .tag.bad{background:var(--badbg);color:var(--bad)}.tag.neutral{background:var(--line);color:#475569}
+  .tag.info{background:var(--infobg);color:var(--info)}.tag.sub{background:var(--subbg);color:var(--sub)}
+  .tag.allergen{background:#fde7d8;color:#9a3412;border:1px solid #f5c9a3}
+  .tag.allergen.added{background:#fee2e2;color:#991b1b;border-color:#f5a3a3}
+  .qtyinput,.txt,select.txt{padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px}
+  .qtyinput{width:90px}
+  .empty{text-align:center;color:var(--muted);padding:36px}
+  .note{font-size:12.5px;color:var(--muted)}
+  a{color:var(--accent,#2563eb)}
+  code.mono{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:12.5px}
+  .stepper{display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap}
+  .step{flex:1;min-width:110px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .step .k{font-size:11px;color:var(--muted);font-weight:600}.step .t{font-size:12.5px;font-weight:600;margin-top:2px}
+  .step.done{border-color:#bbf7d0;background:#f0fdf4}.step.done .k{color:var(--ok)}
+  .step.current{border-color:var(--brand);background:#fef2f1}.step.current .k{color:var(--brand)}
+  .progressbar{height:7px;background:var(--line);border-radius:999px;overflow:hidden;width:130px}.progressbar>i{display:block;height:100%;background:var(--brand)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;font-size:13.5px}.kv b{color:var(--muted);font-weight:600}
+  .banner{border-radius:10px;padding:12px 14px;font-size:13.5px;margin-bottom:14px}
+  .banner.warn{background:var(--warnbg);color:#92400e}.banner.ok{background:var(--okbg);color:#14532d}
+  .banner.info{background:var(--infobg);color:var(--info)}.banner.bad{background:var(--badbg);color:#991b1b}
+  .subpanel{background:var(--soft);border:1px dashed #cbd5e1;border-radius:10px;padding:12px 14px;margin:6px 0 2px}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--ink);color:#fff;padding:13px 18px;border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;transform:translateY(8px);transition:.2s;z-index:50}
+  .toast.show{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="logo">VF</div><h1>Production Console</h1>
+  <span class="env">Prototype · mock NetSuite · Vic's Foods (sub 5)</span></header>
+<div class="layout"><nav class="side" id="nav"></nav><main id="main"></main></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   NETSUITE ADAPTER (MOCK) — the only part that changes to go live.
+============================================================================ */
+const NetSuite={
+  _assemblyComponents:{
+    "FG-1001":{name:"Chicken Pot Pie 10oz",uom:"EA",components:[
+      {sku:"RM-FLOUR",name:"Pastry Flour",qtyPer:0.18,uom:"LB",lot:true,alternates:["RM-FLOUR-ALT"]},
+      {sku:"RM-BUTTER",name:"Butter",qtyPer:0.08,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-CHKN",name:"Diced Chicken",qtyPer:0.22,uom:"LB",lot:true,alternates:["RM-CHKN-ALT"]},
+      {sku:"RM-VEGMIX",name:"Vegetable Mix",qtyPer:0.15,uom:"LB",lot:true,alternates:[]},
+      {sku:"PK-TRAY10",name:"10oz Tray + Lid",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "FG-1002":{name:"Beef Empanada 12ct",uom:"CS",components:[
+      {sku:"RM-FLOUR",name:"Pastry Flour",qtyPer:0.9,uom:"LB",lot:true,alternates:["RM-FLOUR-ALT"]},
+      {sku:"RM-BEEF",name:"Ground Beef",qtyPer:1.4,uom:"LB",lot:true,alternates:["RM-BEEF-ALT"]},
+      {sku:"RM-ONION",name:"Diced Onion",qtyPer:0.3,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-SPICE",name:"Empanada Spice Blend",qtyPer:0.05,uom:"LB",lot:false,alternates:[]},
+      {sku:"PK-BOX12",name:"12ct Retail Box",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "FG-1003":{name:"Veggie Spring Roll 20ct",uom:"CS",components:[
+      {sku:"RM-WRAP",name:"Spring Roll Wrapper",qtyPer:20,uom:"EA",lot:true,alternates:[]},
+      {sku:"RM-VEGMIX",name:"Vegetable Mix",qtyPer:1.1,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-SOY",name:"Soy Sauce",qtyPer:0.12,uom:"LB",lot:true,alternates:[]},
+      {sku:"PK-BOX20",name:"20ct Box",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "FG-1004":{name:"Marinara Sauce 16oz",uom:"EA",components:[
+      {sku:"RM-TOMATO",name:"Crushed Tomato",qtyPer:0.95,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-OLIVEOIL",name:"Olive Oil",qtyPer:0.04,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-GARLIC",name:"Garlic",qtyPer:0.02,uom:"LB",lot:true,alternates:[]},
+      {sku:"PK-JAR16",name:"16oz Jar + Lid",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    // ----- REPACK DEPARTMENT items (bulk → retail). Each has a BOM so it can flow to Production. -----
+    "RP-101":{name:"Marinara Sauce 16oz — Retail (12/cs)",uom:"CS",dept:"Repack",components:[
+      {sku:"RM-TOMATO",name:"Crushed Tomato (bulk)",qtyPer:11.4,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-OLIVEOIL",name:"Olive Oil",qtyPer:0.48,uom:"LB",lot:true,alternates:[]},
+      {sku:"RM-GARLIC",name:"Garlic",qtyPer:0.24,uom:"LB",lot:true,alternates:[]},
+      {sku:"PK-JAR16",name:"16oz Jar + Lid",qtyPer:12,uom:"EA",lot:false,alternates:[]},
+      {sku:"PK-CS12",name:"12-jar Case",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "RP-102":{name:"Diced Chicken 2lb — Retail Pack",uom:"EA",dept:"Repack",components:[
+      {sku:"RM-CHKN",name:"Diced Chicken (bulk)",qtyPer:2,uom:"LB",lot:true,alternates:["RM-CHKN-ALT"]},
+      {sku:"PK-TRAY2",name:"2lb Tray + Film",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "RP-103":{name:"Vegetable Mix 1lb — Retail Bag",uom:"EA",dept:"Repack",components:[
+      {sku:"RM-VEGMIX",name:"Vegetable Mix (bulk)",qtyPer:1,uom:"LB",lot:true,alternates:[]},
+      {sku:"PK-BAG1",name:"1lb Poly Bag",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "RP-104":{name:"Pastry Flour 5lb — Retail Bag",uom:"EA",dept:"Repack",components:[
+      {sku:"RM-FLOUR",name:"Pastry Flour (bulk)",qtyPer:5,uom:"LB",lot:true,alternates:["RM-FLOUR-ALT"]},
+      {sku:"PK-BAG5",name:"5lb Paper Bag",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+    "RP-105":{name:"Ground Beef 1lb — Retail Tray",uom:"EA",dept:"Repack",components:[
+      {sku:"RM-BEEF",name:"Ground Beef (bulk)",qtyPer:1,uom:"LB",lot:true,alternates:["RM-BEEF-ALT"]},
+      {sku:"PK-TRAY1",name:"1lb Tray + Film",qtyPer:1,uom:"EA",lot:false,alternates:[]}]},
+  },
+  _names:{"RM-FLOUR-ALT":"Pastry Flour — Alt Mill","RM-CHKN-ALT":"Diced Chicken — Alt Supplier","RM-BEEF-ALT":"Ground Beef 80/20 — Alt"},
+  // FDA "Big 9" allergens declared on each item record (component or alternate). Keyed by SKU so it
+  // covers alternates too — drives Stage 1 allergen summary, traveler flags, and substitution warnings.
+  _allergens:{
+    "RM-FLOUR":["Wheat"],"RM-FLOUR-ALT":["Wheat"],
+    "RM-BUTTER":["Milk"],
+    "RM-WRAP":["Wheat"],
+    "RM-SOY":["Soy","Wheat"],
+    "RM-SPICE":["Mustard"],
+    "RM-CHKN-ALT":["Soy"],
+  },
+  _inventory:{
+    "RM-FLOUR":{onHand:2000,committed:200,lots:[{lot:"LOT-FLR-2403",expiry:"2026-09-30",qty:1200},{lot:"LOT-FLR-2404",expiry:"2026-12-31",qty:800}]},
+    "RM-FLOUR-ALT":{onHand:1500,committed:0,lots:[{lot:"LOT-FLRA-2406",expiry:"2026-12-01",qty:1500}]},
+    "RM-BUTTER":{onHand:300,committed:50,lots:[{lot:"LOT-BTR-2405",expiry:"2026-08-15",qty:180},{lot:"LOT-BTR-2406",expiry:"2026-10-10",qty:120}]},
+    "RM-CHKN":{onHand:80,committed:20,lots:[{lot:"LOT-CHK-2406",expiry:"2026-07-05",qty:80}]},
+    "RM-CHKN-ALT":{onHand:500,committed:0,lots:[{lot:"LOT-CHKA-2406",expiry:"2026-08-01",qty:500}]},
+    "RM-VEGMIX":{onHand:500,committed:40,lots:[{lot:"LOT-VEG-2405",expiry:"2026-07-20",qty:250},{lot:"LOT-VEG-2406",expiry:"2026-09-01",qty:250}]},
+    "RM-BEEF":{onHand:400,committed:30,lots:[{lot:"LOT-BEF-2406",expiry:"2026-07-12",qty:250},{lot:"LOT-BEF-2407",expiry:"2026-08-30",qty:150}]},
+    "RM-BEEF-ALT":{onHand:300,committed:0,lots:[{lot:"LOT-BEFA-2406",expiry:"2026-09-01",qty:300}]},
+    "RM-ONION":{onHand:200,committed:10,lots:[{lot:"LOT-ONI-2406",expiry:"2026-07-01",qty:120},{lot:"LOT-ONI-2407",expiry:"2026-08-01",qty:80}]},
+    "RM-SPICE":{onHand:60,committed:0,lots:[]},
+    "RM-WRAP":{onHand:5000,committed:0,lots:[{lot:"LOT-WRP-2405",expiry:"2026-08-01",qty:3000},{lot:"LOT-WRP-2406",expiry:"2026-11-01",qty:2000}]},
+    "RM-SOY":{onHand:100,committed:0,lots:[{lot:"LOT-SOY-2405",expiry:"2027-01-01",qty:100}]},
+    "RM-TOMATO":{onHand:3000,committed:100,lots:[{lot:"LOT-TOM-2406",expiry:"2026-12-01",qty:2000},{lot:"LOT-TOM-2407",expiry:"2027-03-01",qty:1000}]},
+    "RM-OLIVEOIL":{onHand:200,committed:0,lots:[{lot:"LOT-OIL-2405",expiry:"2027-06-01",qty:200}]},
+    "RM-GARLIC":{onHand:80,committed:0,lots:[{lot:"LOT-GAR-2406",expiry:"2026-09-01",qty:80}]},
+    "PK-TRAY10":{onHand:9000,committed:0,lots:[]},"PK-BOX12":{onHand:4000,committed:0,lots:[]},
+    "PK-BOX20":{onHand:3000,committed:0,lots:[]},"PK-JAR16":{onHand:8000,committed:0,lots:[]},
+    "PK-CS12":{onHand:1000,committed:0,lots:[]},"PK-TRAY2":{onHand:6000,committed:0,lots:[]},
+    "PK-BAG1":{onHand:7000,committed:0,lots:[]},"PK-BAG5":{onHand:2000,committed:0,lots:[]},"PK-TRAY1":{onHand:6000,committed:0,lots:[]},
+  },
+  // Repack-department planning data: finished-good on-hand, period demand forecast, par/safety stock.
+  _repackItems:[
+    {sku:"RP-101",onHandFG:8,forecast:30,par:6},
+    {sku:"RP-102",onHandFG:25,forecast:90,par:20},
+    {sku:"RP-103",onHandFG:60,forecast:150,par:40},
+    {sku:"RP-104",onHandFG:12,forecast:50,par:15},
+    {sku:"RP-105",onHandFG:30,forecast:80,par:20},
+  ],
+  getAssembly(sku){return this._assemblyComponents[sku]||null;},
+  getInventory(sku){return this._inventory[sku]||{onHand:0,committed:0,lots:[]};},
+  nameOf(sku){return this._names[sku]||sku;},
+  allergensOf(sku){return this._allergens[sku]||[];},
+};
+
+const REASONS=["Primary short / out of stock","Primary on QA hold","Cost / availability","Approved formula equivalent","Other"];
+const STAGES=[
+  {n:1,k:"Stage 1",t:"Upload & Review"},{n:2,k:"Stage 2",t:"Availability & Subs"},
+  {n:3,k:"Stage 3",t:"Lot Assignment"},{n:4,k:"Stage 4",t:"Print Order"},
+  {n:5,k:"Stage 5",t:"Results & QA Form"},{n:6,k:"Stage 6",t:"Finalize & Build"},
+];
+const state={page:"forecast",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
+  traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
+  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:""};
+try{state.savedViews=JSON.parse(localStorage.getItem("vf_saved_views"))||[];}catch(e){}
+let SEQ=1000;
+// Sample schedule uses dates relative to today so the default "Today" filter always shows production.
+function dPlus(n){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+n);return localISO(d);}
+const SAMPLE_CSV=
+`work_order_ref,finished_good_sku,quantity,uom,build_date,location
+PO-5001,FG-1001,500,EA,${dPlus(0)},Main Plant
+PO-5002,FG-1002,120,CS,${dPlus(0)},Main Plant
+PO-5003,FG-1003,80,CS,${dPlus(1)},Main Plant
+PO-5004,FG-1004,1000,EA,${dPlus(3)},Main Plant
+PO-5005,FG-9999,200,EA,${dPlus(5)},Main Plant
+PO-5006,FG-1001,,EA,${dPlus(5)},Main Plant`;
+
+/* ---------- utils ---------- */
+function parseCSV(t){const L=t.trim().split(/\r?\n/);const H=splitCsv(L[0]).map(s=>s.trim());
+  return L.slice(1).filter(l=>l.trim()).map(l=>{const c=splitCsv(l);const o={};H.forEach((h,i)=>o[h]=(c[i]||"").trim());return o;});}
+function splitCsv(l){const o=[];let c="",q=false;for(let i=0;i<l.length;i++){const ch=l[i];
+  if(ch==='"'){if(q&&l[i+1]==='"'){c+='"';i++;}else q=!q;}else if(ch===','&&!q){o.push(c);c="";}else c+=ch;}o.push(c);return o;}
+function round(n,d=2){const f=Math.pow(10,d);return Math.round((+n||0)*f)/f;}
+function today(){return new Date().toISOString().slice(0,10);}
+function julian(iso){const d=new Date(iso+"T00:00:00");const s=new Date(d.getFullYear(),0,0);return Math.floor((d-s)/86400000);}
+function genLotCode(wo){const d=new Date(wo.buildDate+"T00:00:00");const yy=String(d.getFullYear()).slice(2);
+  const ddd=String(julian(wo.buildDate)).padStart(3,"0");return `${yy}${ddd}-${wo.id.replace(/\D/g,"")}`;}
+function localISO(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function inDateFilter(wo){const f=state.dateFilter;if(!f||f.mode==="all")return true;const bd=wo.buildDate;if(!bd)return false;
+  const t=new Date();t.setHours(0,0,0,0);
+  if(f.mode==="today")return bd===localISO(t);
+  if(f.mode==="tomorrow"){const d=new Date(t);d.setDate(d.getDate()+1);return bd===localISO(d);}
+  if(f.mode==="week"){const s=new Date(t);s.setDate(t.getDate()-t.getDay());const e=new Date(s);e.setDate(s.getDate()+6);return bd>=localISO(s)&&bd<=localISO(e);}
+  if(f.mode==="custom"){if(f.from&&bd<f.from)return false;if(f.to&&bd>f.to)return false;return true;}
+  return true;}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+let toastT;function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),2600);}
+
+/* ---------- domain ---------- */
+function explode(wo){const a=NetSuite.getAssembly(wo.sku);if(!a)return[];
+  return a.components.map(c=>({...c,required:round(c.qtyPer*wo.qty,2)}));}
+function effectiveComponents(wo){return explode(wo).map(c=>{const sub=(wo.substitutions||{})[c.sku];
+  if(sub)return{...c,origSku:c.sku,origName:c.name,sku:sub.sku,name:NetSuite.nameOf(sub.sku),substituted:true,reason:sub.reason};
+  return c;});}
+function availabilityRow(c){const inv=NetSuite.getInventory(c.sku);const avail=round(inv.onHand-inv.committed,2);
+  return{...c,onHand:inv.onHand,committed:inv.committed,available:avail,short:avail<c.required};}
+function lotsFor(sku){return NetSuite.getInventory(sku).lots;}
+function fefoAssign(wo){wo.lotAssignments={};
+  effectiveComponents(wo).filter(c=>c.lot).forEach(c=>{const lots=[...lotsFor(c.sku)].sort((a,b)=>a.expiry<b.expiry?-1:1);
+    let need=c.required;const picks=[];
+    for(const L of lots){if(need<=0)break;const take=Math.min(L.qty,round(need,2));if(take>0){picks.push({lot:L.lot,expiry:L.expiry,qty:round(take,2)});need=round(need-take,2);}}
+    wo.lotAssignments[c.sku]={picks};});}
+function pickSum(picks){return round((picks||[]).reduce((s,p)=>s+(+p.qty||0),0),2);}
+function itemName(sku){for(const a of Object.values(NetSuite._assemblyComponents)){const c=a.components.find(x=>x.sku===sku);if(c)return c.name;}return NetSuite._names[sku]||sku;}
+/* ---------- allergens ---------- */
+// Aggregate the allergens of a WO's effective (post-substitution) components.
+function woAllergens(wo){const set=new Set();effectiveComponents(wo).forEach(c=>NetSuite.allergensOf(c.sku).forEach(a=>set.add(a)));return[...set].sort();}
+// Allergens a substitution would ADD vs. the component it replaces (food-safety risk).
+function addedAllergens(origSku,altSku){const o=new Set(NetSuite.allergensOf(origSku));return NetSuite.allergensOf(altSku).filter(a=>!o.has(a));}
+function allergenTags(list,cls=""){return list.length?list.map(a=>`<span class="tag allergen ${cls}">${esc(a)}</span>`).join(" "):'<span class="note">none</span>';}
+
+/* ---------- work-order lifecycle actions ---------- */
+// "Not started" = still a draft at stage 1, nothing committed or built → safe to delete.
+function notStarted(w){return !w.completed&&!w.partiallyBuilt&&w.producedQty===0&&w.stage<2;}
+function deleteWO(id){const i=state.workOrders.findIndex(w=>w.id===id);
+  if(i>=0&&notStarted(state.workOrders[i])){state.workOrders.splice(i,1);state.selected=state.selected.filter(s=>s!==id);return true;}return false;}
+// Accept a partial build as the final, complete output (distinct from closing it short).
+function markComplete(id){const w=state.workOrders.find(x=>x.id===id);
+  if(w&&w.partiallyBuilt&&!w.completed){w.completed=true;w.partiallyBuilt=false;w.closedShort=false;w.status="Built";return true;}return false;}
+
+/* ---------- saved dashboard views ---------- */
+function persistViews(){try{localStorage.setItem("vf_saved_views",JSON.stringify(state.savedViews));}catch(e){}}
+function saveCurrentView(){const f=state.dateFilter;
+  const dft=f.mode==="custom"?`${f.from||"…"} → ${f.to||"…"}`:({today:"Today",tomorrow:"Tomorrow",week:"This week",all:"All dates"}[f.mode]||f.mode);
+  const name=(window.prompt("Name this view",dft)||"").trim();if(!name)return;
+  state.savedViews.push({name,mode:f.mode,from:f.from,to:f.to});persistViews();toast("View saved");render();}
+function applyView(i){const v=state.savedViews[i];if(!v)return;state.dateFilter={mode:v.mode,from:v.from||"",to:v.to||""};render();}
+function delView(i){state.savedViews.splice(i,1);persistViews();render();}
+
+/* ---------- flow ---------- */
+// Single factory for a work order — used by both CSV import and the Forecasting → Production hand-off.
+function makeWO(o){SEQ++;const wo={id:"WO"+SEQ,ref:o.ref||"",sku:o.sku,name:o.name,
+  qty:o.qty,uom:o.uom||"EA",buildDate:o.buildDate,location:o.location||"Main Plant",
+  hasBom:true,stage:1,status:"Draft",source:o.source||"manual",
+  substitutions:{},committed:false,lotAssignments:null,finishedLot:"",
+  results:{actualQty:o.qty,shrinkQty:0},producedQty:0,partiallyBuilt:false,closedShort:false,builds:[],
+  signedForm:"",signedReceived:false,signedDate:"",completed:false};
+  state.workOrders.push(wo);return wo;}
+// Allergens for a finished-good SKU (aggregated from its BOM) — used in the Forecasting table.
+function skuAllergens(sku){const a=NetSuite.getAssembly(sku);if(!a)return[];const set=new Set();
+  a.components.forEach(c=>NetSuite.allergensOf(c.sku).forEach(x=>set.add(x)));return[...set].sort();}
+function ingestUpload(rows){const errors=[];let ok=0;
+  rows.forEach((r,idx)=>{const issues=[];const a=NetSuite.getAssembly(r.finished_good_sku);
+    if(!r.finished_good_sku)issues.push("Missing assembly SKU");else if(!a)issues.push("Unknown assembly — no item record");
+    const qty=parseFloat(r.quantity);if(!(qty>0))issues.push("Invalid / missing quantity");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(r.build_date||""))issues.push("Invalid / missing build date");
+    if(!r.uom)issues.push("Missing unit of measure");
+    if(issues.length){errors.push({line:idx+2,ref:r.work_order_ref||"(no ref)",sku:r.finished_good_sku||"—",issues});return;}
+    makeWO({ref:r.work_order_ref,sku:r.finished_good_sku,name:a.name,qty,uom:r.uom,buildDate:r.build_date,location:r.location,source:"upload"});ok++;});
+  state.uploadErrors=errors;
+  toast(`Imported ${ok} order(s)`+(errors.length?` · ${errors.length} flagged`:""));
+  state.page="dashboard";render();}
+/* ---------- forecasting → production ---------- */
+function repackRows(){return NetSuite._repackItems.map(it=>{const a=NetSuite.getAssembly(it.sku)||{name:it.sku,uom:"EA"};
+  const suggested=Math.max(0,Math.round(it.forecast+it.par-it.onHandFG));
+  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par};});}
+function fcQtyFor(it){return state.fcQty[it.sku]!=null?state.fcQty[it.sku]:it.suggested;}
+function sendToProduction(){const date=state.fcDate||dPlus(1);const sel=state.fcSelected.slice();if(!sel.length)return;
+  const rows=repackRows();let n=0;
+  sel.forEach(sku=>{const it=rows.find(x=>x.sku===sku);const a=NetSuite.getAssembly(sku);if(!it||!a)return;
+    const qty=round(fcQtyFor(it),0);if(qty<=0)return;
+    makeWO({ref:`PLAN-${sku}`,sku,name:a.name,qty,uom:a.uom,buildDate:date,location:"Repack Line",source:"forecast"});n++;});
+  state.fcSelected=[];state.fcQty={};toast(`Sent ${n} item(s) to Production`);state.page="dashboard";render();}
+function openWO(id){state.openWO=id;state.page="process";
+  const wo=getWO();if(wo&&!wo.finishedLot)wo.finishedLot=genLotCode(wo);render();}
+function getWO(){return state.workOrders.find(w=>w.id===state.openWO);}
+function advance(to){const wo=getWO();if(to>wo.stage)wo.stage=to;if(wo.stage>=2&&wo.status==="Draft")wo.status="In Process";render();}
+function processBuild(wo){const q=round(wo.results.actualQty,2);
+  wo.builds.push({qty:q,shrink:round(+wo.results.shrinkQty||0,2),lot:wo.finishedLot,date:today(),
+    picks:Object.entries(wo.lotAssignments||{}).flatMap(([sku,a])=>a.picks.map(p=>({sku,lot:p.lot,expiry:p.expiry,qty:p.qty})))});
+  wo.producedQty=round(wo.producedQty+q,2);
+  if(wo.producedQty>=wo.qty){wo.completed=true;wo.status="Built";}
+  else{wo.partiallyBuilt=true;wo.status="Partially Built";}
+  render();}
+
+/* ---------- shell ---------- */
+const NAV=[{id:"forecast",label:"Forecasting & Planning",icon:"📈"},
+  {id:"dashboard",label:"Production Management",icon:"▣"},
+  {id:"inventory",label:"Inventory",icon:"▦"},{id:"history",label:"Production History",icon:"🗂"},
+  {id:"reports",label:"Reports",icon:"📊"},{id:"trace",label:"Traceability",icon:"🔎"}];
+function go(p){state.page=p;if(p!=="process")state.openWO=null;render();}
+function render(){renderNav();document.getElementById("main").innerHTML=
+  ({dashboard:viewDashboard,forecast:viewForecast,process:viewProcess,inventory:viewInventory,history:viewHistory,reports:viewReports,trace:viewTrace}[state.page])();wire();}
+function renderNav(){document.getElementById("nav").innerHTML=NAV.map(n=>{
+  const c=n.id==="dashboard"?state.workOrders.filter(w=>!w.completed).length:0;const b=c?`<span class="badge">${c}</span>`:"";
+  return `<button data-go="${n.id}" class="${state.page===n.id?'active':''}"><span>${n.icon}</span><span>${n.label}</span>${b}</button>`;}).join("");}
+
+function statusTag(x){if(x.completed&&x.closedShort)return `<span class="tag warn">Closed (short)</span>`;
+  if(x.completed)return `<span class="tag ok">Built</span>`;
+  if(x.partiallyBuilt)return `<span class="tag info">Partially Built</span>`;
+  if(x.stage>=2)return `<span class="tag info">In Process</span>`;return `<span class="tag neutral">Draft</span>`;}
+function progPct(x){if(x.completed)return 100;if(x.producedQty>0)return Math.min(100,Math.round(x.producedQty/x.qty*100));return Math.round((x.stage-1)/5*100);}
+
+/* ---------- production management (work-order dashboard) ---------- */
+function viewDashboard(){const w=state.workOrders;
+  if(!w.length)return `<h2 class="page">Production Management</h2><p class="sub">No work orders yet.</p>
+    <div class="panel"><div class="empty">Plan items in <strong>Forecasting &amp; Planning</strong>, or import / load a schedule.<br><br>
+    <div class="row" style="justify-content:center">
+      <button class="btn primary" data-go="forecast">📈 Forecasting &amp; Planning</button>
+      <button class="btn ghost" data-importcsv>⬆ Import CSV</button>
+      <button class="btn ghost" data-loadsample>Load sample</button></div>
+    <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none"></div></div>`;
+  const open=w.filter(x=>!x.completed).length;const partial=w.filter(x=>x.partiallyBuilt&&!x.completed).length;
+  const produced=round(w.reduce((n,x)=>n+x.producedQty,0),0);const builtFull=w.filter(x=>x.completed&&!x.closedShort).length;
+  const subRate=w.length?Math.round(w.filter(x=>Object.keys(x.substitutions||{}).length).length/w.length*100):0;
+  const f=state.dateFilter;const list=w.filter(inDateFilter);
+  const fbtn=(mode,label)=>`<button class="btn ${f.mode===mode?'primary':'ghost'} sm" data-filter="${mode}">${label}</button>`;
+  const range=f.mode==="custom"?`<span class="row" style="gap:6px"><input type="date" class="txt" id="fFrom" value="${esc(f.from)}">
+    <span class="note">to</span><input type="date" class="txt" id="fTo" value="${esc(f.to)}"><button class="btn ghost sm" id="fApply">Apply</button></span>`:"";
+  const views=state.savedViews.map((v,i)=>`<span class="row" style="gap:0">
+    <button class="btn ghost sm" data-applyview="${i}" title="Apply this saved view">★ ${esc(v.name)}</button>
+    <button class="btn ghost sm" data-delview="${i}" title="Delete saved view" style="padding-left:7px;padding-right:7px">×</button></span>`).join("");
+  // selection limited to the rows currently visible under the filter
+  const sel=state.selected.filter(id=>list.some(x=>x.id===id));
+  const selDel=sel.filter(id=>{const x=w.find(y=>y.id===id);return x&&notStarted(x);});
+  const bulkBar=sel.length?`<div class="banner info" style="display:flex;align-items:center;gap:12px">
+    <strong>${sel.length} selected</strong>
+    <button class="btn primary sm" id="bulkDelete" ${selDel.length?'':'disabled'}>🗑 Delete ${selDel.length||''} unstarted</button>
+    ${sel.length-selDel.length>0?`<span class="note">${sel.length-selDel.length} in-process can't be deleted</span>`:''}
+    <button class="btn ghost sm" id="selClear" style="margin-left:auto">Clear</button></div>`:"";
+  const allSel=list.length&&list.every(x=>state.selected.includes(x.id));
+  return `<h2 class="page">Production Management</h2><p class="sub">Live KPIs and the six-stage build pipeline.</p>
+    <div class="cards">
+      <div class="card brand"><div class="n">${open}</div><div class="l">Open work orders</div></div>
+      <div class="card"><div class="n">${partial}</div><div class="l">Partially built</div></div>
+      <div class="card"><div class="n">${produced.toLocaleString()}</div><div class="l">Units produced</div></div>
+      <div class="card"><div class="n">${builtFull}</div><div class="l">Fully built</div></div>
+      <div class="card"><div class="n">${subRate}%</div><div class="l">Substitution rate</div></div></div>
+    <div class="panel"><div class="spread" style="margin-bottom:12px"><h3 style="margin:0">Work orders</h3>
+      <div class="row" style="gap:6px">
+        <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
+        <button class="btn ghost sm" data-importcsv title="Import a production schedule CSV">⬆ Import CSV</button>
+        <button class="btn ghost sm" data-loadsample>Load sample</button>
+        <button class="btn ghost sm" data-template title="Download a blank CSV template">Template</button></div></div>
+      ${state.uploadErrors.length?`<div class="banner bad" style="display:flex;align-items:center;gap:10px">
+        ⚠ <strong>${state.uploadErrors.length} row(s) flagged</strong> on last import (bad SKU/qty/date — not imported).
+        <button class="btn ghost sm" id="showErrs" style="margin-left:auto">View</button>
+        <button class="btn ghost sm" id="clearErrs">Dismiss</button></div>
+        ${state._showErrs?`<table style="margin-bottom:14px"><thead><tr><th>Line</th><th>Ref</th><th>SKU</th><th>Problem(s)</th></tr></thead>
+        <tbody>${state.uploadErrors.map(e=>`<tr><td>${e.line}</td><td>${esc(e.ref)}</td><td>${esc(e.sku)}</td>
+          <td>${e.issues.map(i=>`<span class="tag bad" style="margin:1px">${esc(i)}</span>`).join(" ")}</td></tr>`).join("")}</tbody></table>`:""}`:""}
+      <div class="row" style="margin-bottom:10px;gap:6px"><span class="note" style="margin-right:4px">Build date:</span>
+        ${fbtn("today","Today")}${fbtn("tomorrow","Tomorrow")}${fbtn("week","This week")}${fbtn("all","All")}${fbtn("custom","Range…")}
+        ${range}<button class="btn ghost sm" id="saveView" title="Save the current date filter as a reusable view">💾 Save view</button>
+        <span class="note" style="margin-left:auto">${list.length} of ${w.length}</span></div>
+      ${views?`<div class="row" style="margin-bottom:10px;gap:6px"><span class="note" style="margin-right:4px">Saved views:</span>${views}</div>`:""}
+      ${bulkBar}
+      <table><thead><tr><th style="width:26px"><input type="checkbox" id="selAll" ${allSel?'checked':''} title="Select all in view"></th>
+        <th>WO</th><th>Finished good</th><th>Qty</th><th>Build date</th><th>Progress</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.length?list.map(x=>`<tr>
+        <td><input type="checkbox" data-selrow="${x.id}" ${state.selected.includes(x.id)?'checked':''}></td>
+        <td><strong>${x.id}</strong><div class="note">${esc(x.ref)}</div></td>
+        <td>${esc(x.name)}<div class="note">${esc(x.sku)}</div>${woAllergens(x).length?`<div style="margin-top:3px">${allergenTags(woAllergens(x))}</div>`:""}</td>
+        <td>${x.producedQty>0&&!x.completed?`${x.producedQty}/${x.qty}`:x.qty} ${esc(x.uom)}</td><td>${esc(x.buildDate)}</td>
+        <td><div class="row"><div class="progressbar"><i style="width:${progPct(x)}%"></i></div>
+          <span class="note">${x.completed?"Done":(x.producedQty>0?Math.round(x.producedQty/x.qty*100)+"%":x.stage+"/6")}</span></div></td>
+        <td>${statusTag(x)}</td>
+        <td><div class="row" style="gap:6px;justify-content:flex-end">
+          ${x.partiallyBuilt&&!x.completed?`<button class="btn ghost sm" data-markdone="${x.id}" title="Mark this partial build complete">✓ Complete</button>`:""}
+          <button class="btn ghost sm" data-open="${x.id}">${x.completed?'View':'Open'}</button>
+          ${notStarted(x)?`<button class="btn ghost sm" data-del="${x.id}" title="Delete — not started">🗑</button>`:""}
+        </div></td>
+      </tr>`).join(""):`<tr><td colspan="8" class="empty">No work orders match this date filter.${f.mode!=="all"?' <button class="btn ghost sm" data-filter="all">Show all dates</button>':''}</td></tr>`}</tbody></table></div>`;}
+
+/* ---------- forecasting & planning (repack department) ---------- */
+function viewForecast(){const rows=repackRows();const date=state.fcDate||dPlus(1);
+  const belowPar=rows.filter(r=>r.belowPar).length;const totalForecast=rows.reduce((s,r)=>s+r.forecast,0);
+  const selRows=rows.filter(r=>state.fcSelected.includes(r.sku));
+  const selUnits=selRows.reduce((s,r)=>s+round(fcQtyFor(r),0),0);
+  const allSel=rows.length&&rows.every(r=>state.fcSelected.includes(r.sku));
+  return `<h2 class="page">Forecasting &amp; Planning</h2>
+    <p class="sub"><strong>Repack department</strong> — demand forecast vs. finished-goods on hand. Select items, set a build qty, and send them to <strong>Production</strong> as work orders.</p>
+    <div class="cards">
+      <div class="card brand"><div class="n">${rows.length}</div><div class="l">Repack items</div></div>
+      <div class="card"><div class="n">${belowPar}</div><div class="l">Below par</div></div>
+      <div class="card"><div class="n">${totalForecast.toLocaleString()}</div><div class="l">Forecast units</div></div>
+      <div class="card"><div class="n">${selRows.length}</div><div class="l">Selected</div></div></div>
+    <div class="panel">
+      <div class="row" style="margin-bottom:12px;gap:10px">
+        <span class="note">Build date for new orders:</span>
+        <input type="date" class="txt" id="fcDate" value="${esc(date)}">
+        <button class="btn primary sm" id="fcSend" ${selRows.length?'':'disabled'}>➕ Send ${selRows.length||''} to Production →</button>
+        <span class="note" style="margin-left:auto">${selRows.length} selected · ${selUnits.toLocaleString()} units</span></div>
+      <table><thead><tr>
+        <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all"></th>
+        <th>Item</th><th>Allergens</th><th>On-hand FG</th><th>Forecast</th><th>Par</th><th>Suggested</th><th>Build qty</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td><input type="checkbox" data-fcrow="${r.sku}" ${state.fcSelected.includes(r.sku)?'checked':''}></td>
+        <td><strong>${esc(r.sku)}</strong><div class="note">${esc(r.name)}</div></td>
+        <td>${allergenTags(r.allergens)}</td>
+        <td>${r.onHandFG} ${esc(r.uom)} ${r.belowPar?'<span class="tag warn">below par</span>':''}</td>
+        <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.suggested}</strong></td>
+        <td><input class="qtyinput" type="number" min="0" data-fcqty="${r.sku}" value="${fcQtyFor(r)}"></td>
+      </tr>`).join("")}</tbody></table>
+      <div class="note" style="margin-top:8px">Suggested build = forecast + par − on-hand. Build qty is editable per item before sending.</div></div>`;}
+
+/* ---------- inventory ---------- */
+function viewInventory(){const q=(state.invQuery||"").trim();const ql=q.toLowerCase();const inv=NetSuite._inventory;
+  let rows=Object.keys(inv).map(sku=>{const i=inv[sku];return{sku,name:itemName(sku),allergens:NetSuite.allergensOf(sku),onHand:i.onHand,committed:i.committed,avail:round(i.onHand-i.committed,2),lots:i.lots};});
+  const total=rows.length;
+  if(ql)rows=rows.filter(r=>r.sku.toLowerCase().includes(ql)||r.name.toLowerCase().includes(ql)||r.allergens.join(" ").toLowerCase().includes(ql)||r.lots.some(l=>l.lot.toLowerCase().includes(ql)));
+  return `<h2 class="page">Raw Material Inventory</h2>
+    <p class="sub">On-hand, committed and available by component, with lots. Click <strong>where-used</strong> on a lot to trace it forward.</p>
+    <div class="panel"><div class="row"><input class="txt" id="invInput" placeholder="Search item, SKU, allergen, or lot…" value="${esc(q)}" style="width:320px">
+      <button class="btn primary sm" id="invGo">Search</button>${q?`<button class="btn ghost sm" id="invClear">Clear</button>`:""}
+      <span class="note" style="margin-left:auto">${rows.length} of ${total}</span></div></div>
+    <div class="panel"><table><thead><tr><th>Item</th><th>Allergens</th><th>On hand</th><th>Committed</th><th>Available</th><th>Lots (FEFO order)</th></tr></thead>
+    <tbody>${rows.length?rows.map(r=>`<tr><td>${esc(r.sku)}<div class="note">${esc(r.name)}</div></td>
+      <td>${allergenTags(r.allergens)}</td>
+      <td>${r.onHand}</td><td>${r.committed}</td><td><strong>${r.avail}</strong> ${r.avail<=0?'<span class="tag bad">out</span>':''}</td>
+      <td>${r.lots.length?[...r.lots].sort((a,b)=>a.expiry<b.expiry?-1:1).map(l=>`<code class="mono">${esc(l.lot)}</code> <span class="note">${l.qty} · exp ${esc(l.expiry)}</span> <a href="#" data-where="${esc(l.lot)}">where-used</a>`).join("<br>"):'<span class="note">non-lot</span>'}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">No items match "${esc(q)}".</td></tr>`}</tbody></table></div>`;}
+
+/* ---------- production history ---------- */
+function producedWOs(){return state.workOrders.filter(w=>w.producedQty>0);}
+function viewHistory(){const q=(state.historyQuery||"").trim();const ql=q.toLowerCase();const done=producedWOs();
+  if(!done.length)return `<h2 class="page">Production History</h2><p class="sub">Completed and partial production appears here.</p>
+    <div class="panel"><div class="empty">No production recorded yet. Process a build (Stage 6) to record it.</div></div>`;
+  const list=ql?done.filter(w=>w.id.toLowerCase().includes(ql)||(w.ref||"").toLowerCase().includes(ql)||w.name.toLowerCase().includes(ql)||w.sku.toLowerCase().includes(ql)||(w.finishedLot||"").toLowerCase().includes(ql)):done;
+  return `<h2 class="page">Production History</h2>
+    <p class="sub">Search by <strong>production number</strong> (WO or PO reference), item, or finished lot.</p>
+    <div class="panel"><div class="row"><input class="txt" id="histInput" placeholder="e.g. WO1001 or PO-5001" value="${esc(q)}" style="width:300px">
+      <button class="btn primary sm" id="histGo">Search</button>${q?`<button class="btn ghost sm" id="histClear">Clear</button>`:""}
+      <span class="note" style="margin-left:auto">${list.length} of ${done.length}</span></div></div>
+    <div class="panel"><table><thead><tr><th>Production #</th><th>Finished good</th><th>Built / planned</th><th>Finished lot</th><th>Build date</th><th>QA form</th><th>Status</th><th></th></tr></thead>
+    <tbody>${list.length?list.map(w=>`<tr>
+      <td><strong>${esc(w.id)}</strong><div class="note">${esc(w.ref)}</div></td>
+      <td>${esc(w.name)}<div class="note">${esc(w.sku)}</div></td>
+      <td>${w.producedQty} / ${w.qty} ${esc(w.uom)}</td>
+      <td><code class="mono">${esc(w.finishedLot)}</code></td><td>${esc(w.buildDate)}</td>
+      <td>${w.signedReceived?'<span class="tag ok">received</span>':'<span class="tag warn">missing</span>'}</td>
+      <td>${statusTag(w)}</td><td><button class="btn ghost sm" data-open="${w.id}">View</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No matches.</td></tr>`}</tbody></table></div>`;}
+
+/* ---------- reports (daily / weekly production summary) ---------- */
+function reportRange(){const base=state.reportDate||today();
+  if(state.reportMode==="weekly"){const d=new Date(base+"T00:00:00");const s=new Date(d);s.setDate(d.getDate()-d.getDay());const e=new Date(s);e.setDate(s.getDate()+6);
+    return{from:localISO(s),to:localISO(e),label:`Week of ${localISO(s)} – ${localISO(e)}`};}
+  return{from:base,to:base,label:base};}
+function periodStats(from,to){const evs=[];
+  state.workOrders.forEach(w=>w.builds.forEach(b=>{if(b.date>=from&&b.date<=to)evs.push({b,w});}));
+  const produced=round(evs.reduce((s,e)=>s+e.b.qty,0),2);
+  const shrink=round(evs.reduce((s,e)=>s+(+e.b.shrink||0),0),2);
+  const batches=evs.length;
+  const wos=[...new Set(evs.map(e=>e.w.id))];
+  const planned=round(wos.reduce((s,id)=>{const w=state.workOrders.find(x=>x.id===id);return s+(w?w.qty:0);},0),2);
+  const onTime=evs.filter(e=>e.b.date<=e.w.buildDate).length;
+  const subs=wos.filter(id=>{const w=state.workOrders.find(x=>x.id===id);return Object.keys(w.substitutions||{}).length;}).length;
+  const qaMissing=wos.filter(id=>{const w=state.workOrders.find(x=>x.id===id);return !w.signedReceived;}).length;
+  const byItem={};evs.forEach(e=>{const k=e.w.sku;(byItem[k]=byItem[k]||{name:e.w.name,produced:0,batches:0,shrink:0});byItem[k].produced+=e.b.qty;byItem[k].batches++;byItem[k].shrink+=(+e.b.shrink||0);});
+  return{evs,produced,shrink,batches,planned,onTime,subs,qaMissing,wos,byItem};}
+function viewReports(){const any=producedWOs().length;const r=reportRange();const s=periodStats(r.from,r.to);
+  const head=`<h2 class="page">Production Reports</h2><p class="sub">Daily &amp; weekly production summaries with key food-manufacturing KPIs.</p>`;
+  const tabs=`<div class="panel"><div class="row" style="gap:6px">
+    <button class="btn ${state.reportMode==='daily'?'primary':'ghost'} sm" data-rmode="daily">Daily</button>
+    <button class="btn ${state.reportMode==='weekly'?'primary':'ghost'} sm" data-rmode="weekly">Weekly</button>
+    <input type="date" class="txt" id="rDate" value="${esc(state.reportDate||today())}">
+    <span class="note">${esc(r.label)}</span>
+    <button class="btn ghost sm" id="dlProd" style="margin-left:auto">⬇ Export CSV</button></div></div>`;
+  if(!any)return head+`<div class="panel"><div class="empty">No production recorded yet. Process a build (Stage 6) to populate reports.</div></div>`;
+  if(!s.batches)return head+tabs+`<div class="panel"><div class="empty">No production in this period.</div></div>`;
+  const attain=s.planned?round(s.produced/s.planned*100,1):0;
+  const yld=(s.produced+s.shrink)?round(s.produced/(s.produced+s.shrink)*100,1):0;
+  const scrap=(s.produced+s.shrink)?round(s.shrink/(s.produced+s.shrink)*100,1):0;
+  const onT=s.batches?Math.round(s.onTime/s.batches*100):0;
+  const cards=`<div class="cards">
+    <div class="card brand"><div class="n">${s.batches}</div><div class="l">Batches built</div></div>
+    <div class="card"><div class="n">${s.produced.toLocaleString()}</div><div class="l">Units produced</div></div>
+    <div class="card"><div class="n">${attain}%</div><div class="l">Schedule attainment</div></div>
+    <div class="card"><div class="n">${yld}%</div><div class="l">Yield</div></div>
+    <div class="card"><div class="n">${scrap}%</div><div class="l">Scrap / shrink</div></div>
+    <div class="card"><div class="n">${onT}%</div><div class="l">On-time</div></div></div>`;
+  const itemRows=Object.entries(s.byItem).map(([sku,v])=>`<tr><td>${esc(sku)}<div class="note">${esc(v.name)}</div></td>
+    <td>${v.batches}</td><td>${round(v.produced,0)}</td><td>${round(v.shrink,0)}</td>
+    <td>${(v.produced+v.shrink)?round(v.produced/(v.produced+v.shrink)*100,1):0}%</td></tr>`).join("");
+  const subList=s.wos.flatMap(id=>{const w=state.workOrders.find(x=>x.id===id);return Object.entries(w.substitutions||{}).map(([o,su])=>`<tr><td>${esc(w.id)}</td><td>${esc(o)} → <strong>${esc(su.sku)}</strong></td><td>${esc(su.reason)}</td></tr>`);}).join("");
+  return head+tabs+cards+
+    `<div class="panel"><h3>Production by item — ${esc(r.label)}</h3>
+      <table><thead><tr><th>Item</th><th>Batches</th><th>Produced</th><th>Scrap</th><th>Yield</th></tr></thead><tbody>${itemRows}</tbody></table></div>
+     <div class="panel"><h3>Exceptions</h3>
+      <div class="row" style="margin-bottom:10px"><span class="tag ${s.subs?'sub':'neutral'}">${s.subs} substitution(s)</span>
+        <span class="tag ${s.qaMissing?'warn':'ok'}">${s.qaMissing} QA form(s) missing</span></div>
+      ${subList?`<table><thead><tr><th>WO</th><th>Substitution</th><th>Reason</th></tr></thead><tbody>${subList}</tbody></table>`:'<div class="note">No substitutions in this period.</div>'}</div>`;}
+function downloadProdCSV(){const r=reportRange();const s=periodStats(r.from,r.to);
+  const lines=["item,name,batches,produced,scrap,yield_pct"].concat(Object.entries(s.byItem).map(([sku,v])=>`${sku},"${v.name}",${v.batches},${round(v.produced,0)},${round(v.shrink,0)},${(v.produced+v.shrink)?round(v.produced/(v.produced+v.shrink)*100,1):0}`));
+  const b=new Blob([lines.join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`production-${state.reportMode}-${r.from}.csv`;a.click();}
+
+/* ---------- traceability ---------- */
+function buildGenealogy(){return producedWOs().map(w=>({wo:w.id,fg:w.sku,fgName:w.name,finishedLot:w.finishedLot,builtQty:w.producedQty,uom:w.uom,buildDate:w.buildDate,
+  subs:Object.entries(w.substitutions||{}).map(([o,s])=>`${o}→${s.sku}`),
+  components:effectiveComponents(w).filter(c=>c.lot).map(c=>({sku:c.sku,name:c.name,picks:(w.lotAssignments&&w.lotAssignments[c.sku]?w.lotAssignments[c.sku].picks:[])}))}));}
+function viewTrace(){const q=(state.traceQuery||"").trim();const ql=q.toLowerCase();const gen=buildGenealogy();const mode=state.traceMode||"back";
+  const head=`<h2 class="page">Lot Traceability</h2>
+    <p class="sub"><strong>Backward</strong>: finished lot → components consumed. <strong>Forward</strong>: component lot → finished lots produced. One-up / one-down recall readiness.</p>`;
+  if(!gen.length)return head+`<div class="panel"><div class="empty">No production yet. Process a build (Stage 6) to generate lot genealogy.</div></div>`;
+  const tabs=`<div class="row" style="gap:6px;margin-bottom:12px">
+    <button class="btn ${mode==='back'?'primary':'ghost'} sm" data-trace="back">⟵ Backward (finished → components)</button>
+    <button class="btn ${mode==='forward'?'primary':'ghost'} sm" data-trace="forward">Forward (component → finished) ⟶</button></div>`;
+  const ph=mode==="back"?"finished lot / WO / item — e.g. 26175-1001":"component lot / item — e.g. LOT-CHKA-2406";
+  const search=`<div class="panel">${tabs}<div class="row"><input class="txt" id="traceInput" placeholder="${ph}" value="${esc(q)}" style="width:360px">
+    <button class="btn primary sm" id="traceGo">Search</button>${q?`<button class="btn ghost sm" id="traceClear">Clear</button>`:""}</div></div>`;
+  const hit=s=>ql&&String(s).toLowerCase().includes(ql)?' style="background:#fef08a;border-radius:4px"':"";
+  if(mode==="forward"){const rows=[];gen.forEach(g=>g.components.forEach(c=>c.picks.forEach(p=>rows.push({csku:c.sku,cname:c.name,lot:p.lot,qty:p.qty,fgName:g.fgName,finishedLot:g.finishedLot,wo:g.wo}))));
+    const filt=ql?rows.filter(r=>r.lot.toLowerCase().includes(ql)||r.csku.toLowerCase().includes(ql)||r.cname.toLowerCase().includes(ql)):rows;
+    const body=`<div class="panel"><table><thead><tr><th>Component</th><th>Lot</th><th>→ Finished lot</th><th>Finished good</th><th>WO</th><th>Qty used</th></tr></thead>
+      <tbody>${filt.length?filt.map(r=>`<tr><td>${esc(r.csku)}<div class="note">${esc(r.cname)}</div></td>
+        <td><code class="mono"${hit(r.lot)}>${esc(r.lot)}</code></td><td><code class="mono">${esc(r.finishedLot)}</code></td>
+        <td>${esc(r.fgName)}</td><td>${esc(r.wo)}</td><td>${r.qty}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">No matches.</td></tr>`}</tbody></table></div>`;
+    return head+search+body;}
+  const results=ql?gen.filter(g=>g.finishedLot.toLowerCase().includes(ql)||g.fgName.toLowerCase().includes(ql)||g.fg.toLowerCase().includes(ql)||g.wo.toLowerCase().includes(ql)||g.components.some(c=>c.sku.toLowerCase().includes(ql)||c.picks.some(p=>p.lot.toLowerCase().includes(ql)))):gen;
+  return head+search+(results.map(g=>traceCard(g,ql)).join("")||'<div class="panel"><div class="empty">No matches.</div></div>');}
+function traceCard(g,ql){const hit=s=>ql&&String(s).toLowerCase().includes(ql)?' style="background:#fef08a;border-radius:4px"':"";
+  return `<div class="panel"><div class="spread" style="margin-bottom:8px">
+      <div><strong>${esc(g.fgName)}</strong> <span class="note">(${esc(g.fg)})</span>${g.subs.length?` <span class="tag sub">${g.subs.length} sub</span>`:""}</div>
+      <span class="note">${esc(g.wo)} · ${esc(g.buildDate)}</span></div>
+    <div class="kv" style="margin-bottom:10px"><b>Finished lot</b><span><code class="mono"${hit(g.finishedLot)}>${esc(g.finishedLot)}</code> · built ${g.builtQty} ${esc(g.uom)}</span></div>
+    <table><thead><tr><th>Component</th><th>Lot consumed</th><th>Qty</th></tr></thead>
+    <tbody>${g.components.flatMap(c=>c.picks.map(p=>`<tr><td>${esc(c.sku)}<div class="note">${esc(c.name)}</div></td>
+      <td><code class="mono"${hit(p.lot)}>${esc(p.lot)}</code> <span class="note">exp ${esc(p.expiry)}</span></td><td>${p.qty}</td></tr>`)).join("")||'<tr><td colspan="3" class="note">No lot-tracked components.</td></tr>'}</tbody></table></div>`;}
+
+/* ---------- six-stage processor ---------- */
+function viewProcess(){const wo=getWO();if(!wo)return `<div class="panel"><div class="empty">Work order not found.<br><br><button class="btn primary" data-go="dashboard">Back</button></div></div>`;
+  const stepper=STAGES.map(s=>{const cls=wo.completed?'done':(s.n<wo.stage?'done':s.n===wo.stage?'current':'');
+    return `<div class="step ${cls}"><div class="k">${s.k}</div><div class="t">${s.t}</div></div>`;}).join("");
+  return `<div class="spread"><div><h2 class="page">${wo.id} · ${esc(wo.name)}</h2>
+      <p class="sub">${esc(wo.ref)} · build ${wo.qty} ${esc(wo.uom)} · ${esc(wo.buildDate)} · ${esc(wo.location)} ${statusTag(wo)}</p></div>
+      <button class="btn ghost sm" data-go="dashboard">← All work orders</button></div>
+    <div class="stepper">${stepper}</div>
+    ${({1:stage1,2:stage2,3:stage3,4:stage4,5:stage5,6:stage6}[wo.completed?6:wo.stage])(wo)}`;}
+
+function stage1(wo){const comps=explode(wo);const allerg=woAllergens(wo);
+  return `<div class="panel"><h3>1 · Review work order &amp; required components</h3>
+    <div class="banner info">Components are pulled from the <strong>assembly item record</strong> (${esc(wo.sku)}) and scaled to the build quantity.</div>
+    <div class="banner ${allerg.length?'warn':'ok'}">${allerg.length?`⚠ <strong>Contains:</strong> ${allergenTags(allerg)} — verify line is cleared for these allergens and schedule changeover/sanitation if the prior run differs.`:'✓ No declared allergens in this formula.'}</div>
+    <div class="row" style="margin-bottom:14px;gap:16px;align-items:flex-end">
+      <div><div class="note">Build quantity</div><input class="qtyinput" type="number" id="woQty" value="${wo.qty}"></div>
+      <div><div class="note">Build date</div><input class="txt" type="date" id="woDate" value="${esc(wo.buildDate)}"></div>
+      <div><div class="note">Location</div><input class="txt" id="woLoc" value="${esc(wo.location)}"></div>
+      <button class="btn ghost sm" id="woUpdate">Update &amp; rescale</button></div>
+    <table><thead><tr><th>Component</th><th>Description</th><th>Per unit</th><th>Required</th><th>Allergens</th></tr></thead>
+    <tbody>${comps.map(c=>`<tr><td>${esc(c.sku)}</td><td>${esc(c.name)}</td><td>${c.qtyPer} ${esc(c.uom)}/unit</td><td><strong>${c.required} ${esc(c.uom)}</strong></td><td>${allergenTags(NetSuite.allergensOf(c.sku))}</td></tr>`).join("")}</tbody></table>
+    <div class="row" style="margin-top:16px"><button class="btn primary" data-adv="2">Check availability →</button></div></div>`;}
+
+function stage2(wo){const rows=effectiveComponents(wo).map(availabilityRow);const shorts=rows.filter(r=>r.short);
+  const addedSet=new Set();rows.filter(r=>r.substituted).forEach(r=>addedAllergens(r.origSku,r.sku).forEach(a=>addedSet.add(a)));const addedAll=[...addedSet].sort();
+  return `<div class="panel"><h3>2 · Component availability &amp; substitutions</h3>
+    ${shorts.length?`<div class="banner bad">⛔ ${shorts.length} component(s) short — this work order is <strong>blocked</strong>. Resolve every shortage (substitute an approved alternate in stock) to continue.</div>`
+      :`<div class="banner ok">✓ All components available. Committing reserves these quantities.</div>`}
+    ${addedAll.length?`<div class="banner bad">⚠ <strong>Allergen profile changed by substitution:</strong> a sub adds ${allergenTags(addedAll,"added")}. The finished-good label and traveler must reflect this — get QA sign-off before committing.</div>`:""}
+    <table><thead><tr><th>Component</th><th>On hand</th><th>Committed</th><th>Available</th><th>Required</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows.map(r=>renderAvailRow(wo,r)).join("")}</tbody></table>
+    <div class="row" style="margin-top:16px">
+      <button class="btn primary" id="commitContinue" data-adv="3" ${shorts.length?'disabled':''}>✓ Commit inventory &amp; assign lots →</button>
+      <button class="btn ghost" data-adv="1">← Back</button>${shorts.length?'<span class="note">Resolve all shortages to continue.</span>':''}</div></div>`;}
+function renderAvailRow(wo,r){
+  const added=r.substituted?addedAllergens(r.origSku,r.sku):[];
+  const subNote=r.substituted?`<div class="note"><span class="tag sub">substituted</span> from ${esc(r.origSku)} · ${esc(r.reason)} <a href="#" data-revert="${esc(r.origSku)}">revert</a></div>
+    ${added.length?`<div class="note">⚠ adds allergen ${allergenTags(added,"added")} not in the original component</div>`:""}`:"";
+  const main=`<tr><td>${esc(r.sku)}<div class="note">${esc(r.name)}</div>${subNote}</td>
+    <td>${r.onHand} ${esc(r.uom)}</td><td>${r.committed}</td><td>${r.available}</td><td><strong>${r.required}</strong></td>
+    <td>${r.short?`<span class="tag bad">Short ${round(r.required-r.available,2)}</span>`:`<span class="tag ok">OK</span>`}</td>
+    <td>${r.short&&!r.substituted?`<button class="btn ghost sm" data-subopen="${esc(r.sku)}">Substitute</button>`:""}</td></tr>`;
+  if(r.short&&!r.substituted&&wo._subOpen===r.sku){
+    const alts=(r.alternates||[]).map(asku=>{const inv=NetSuite.getInventory(asku);const av=round(inv.onHand-inv.committed,2);const ok=av>=r.required;
+      const adds=addedAllergens(r.sku,asku);
+      const altNote=adds.length?`<div class="note">⚠ adds ${allergenTags(adds,"added")}</div>`:"";
+      return `<tr><td>${esc(asku)}<div class="note">${esc(NetSuite.nameOf(asku))}</div>${altNote}</td><td>${av} ${esc(r.uom)} avail</td>
+        <td>${ok?`<button class="btn primary sm" data-usesub="${esc(r.sku)}" data-alt="${esc(asku)}">Use this</button>`:`<span class="tag bad">also short</span>`}</td></tr>`;}).join("")
+      ||`<tr><td colspan="3" class="note">No approved alternates on file for this component.</td></tr>`;
+    return main+`<tr><td colspan="7"><div class="subpanel"><div class="spread"><strong>Approved alternates for ${esc(r.sku)}</strong>
+      <span class="row"><label class="note">Reason</label><select class="txt" id="reason-${esc(r.sku)}">${REASONS.map(x=>`<option>${esc(x)}</option>`).join("")}</select></span></div>
+      <table style="margin-top:8px"><tbody>${alts}</tbody></table>
+      <div class="note" style="margin-top:6px">Substitution applies to <strong>this build only</strong>; the assembly's master components are unchanged.
+      An alternate that <strong>adds an allergen</strong> changes the finished-good label — route to QA before use.</div></div></td></tr>`;}
+  return main;}
+
+function stage3(wo){if(!wo.lotAssignments)fefoAssign(wo);
+  const comps=effectiveComponents(wo).filter(c=>c.lot);
+  const blocks=comps.map(c=>{const a=wo.lotAssignments[c.sku]||(wo.lotAssignments[c.sku]={picks:[]});const sum=pickSum(a.picks);const shortf=round(c.required-sum,2);
+    const opts=lotsFor(c.sku);
+    const pickRows=a.picks.map((p,i)=>`<tr>
+      <td><select class="txt" data-lotsel="${esc(c.sku)}" data-i="${i}">${opts.map(o=>`<option value="${esc(o.lot)}" ${o.lot===p.lot?'selected':''}>${esc(o.lot)} (exp ${esc(o.expiry)}, ${o.qty} avail)</option>`).join("")}</select></td>
+      <td><input class="qtyinput" type="number" data-lotqty="${esc(c.sku)}" data-i="${i}" value="${p.qty}"></td>
+      <td><button class="btn ghost sm" data-lotdel="${esc(c.sku)}" data-i="${i}">✕</button></td></tr>`).join("")
+      ||`<tr><td colspan="3" class="note">No lots assigned. ${opts.length?'Add a lot line or re-run FEFO.':'No lot stock on file.'}</td></tr>`;
+    return `<div style="margin-bottom:16px"><div class="spread" style="margin-bottom:6px">
+        <strong>${esc(c.sku)} — ${esc(c.name)} ${c.substituted?'<span class="tag sub">sub</span>':''}</strong>
+        <span class="note">need ${c.required} ${esc(c.uom)} · assigned ${sum} ${shortf>0?`· <span class="tag bad">short ${shortf}</span>`:`· <span class="tag ok">covered</span>`}</span></div>
+      <table><thead><tr><th>Lot</th><th>Consume</th><th></th></tr></thead><tbody>${pickRows}</tbody></table>
+      ${opts.length?`<button class="btn ghost sm" data-lotadd="${esc(c.sku)}" style="margin-top:6px">+ Add lot line</button>`:''}</div>`;}).join("");
+  return `<div class="panel"><h3>3 · Lot assignment &amp; traceability</h3>
+    <div class="banner info">Pre-assigned by <strong>FEFO</strong> (First Expired, First Out). Override any lot or quantity manually — this builds the component-lot → finished-lot genealogy.</div>
+    ${blocks||'<div class="note">No lot-controlled components.</div>'}
+    <div class="panel" style="background:var(--soft)"><h3>Finished-good lot</h3>
+      <div class="row"><span class="tag info">auto-assigned</span><input class="txt" id="finLot" value="${esc(wo.finishedLot)}" style="width:220px">
+        <button class="btn ghost sm" id="resetLot">↻ Reset to auto</button><span class="note">Julian date code (YYDDD) + WO# — editable</span></div></div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost sm" id="refefo">↻ Re-run FEFO</button>
+      <button class="btn primary" data-adv="4">Generate production order →</button><button class="btn ghost" data-adv="2">← Back</button></div></div>`;}
+
+function stage4(wo){return `<div class="panel"><h3>4 · Print production order (batch traveler)</h3>
+    <div class="banner info">The traveler is the shop-floor / QA record: scaled pick list with assigned lots and sign-off lines. QA fills actuals by hand, then the signed copy is scanned back in (Stage 5).</div>
+    ${travelerHTML(wo)}
+    <div class="row" style="margin-top:16px"><button class="btn primary" id="printPO">🖨 Print production order</button>
+      <button class="btn ghost" data-adv="5">Enter results →</button><button class="btn ghost" data-adv="3">← Back</button></div></div>`;}
+
+function stage5(wo){const r=wo.results;const already=wo.producedQty||0;const remaining=round(wo.qty-already,2);
+  const yld=wo.qty?(already+(+r.actualQty||0))/wo.qty*100:0;
+  return `<div class="panel"><h3>5 · Production results &amp; signed QA form</h3>
+    ${already>0?`<div class="banner info">Partial production: <strong>${already}</strong> of ${wo.qty} ${esc(wo.uom)} already built · <strong>${remaining}</strong> remaining.</div>`:""}
+    <div class="row" style="gap:24px;align-items:flex-start;flex-wrap:wrap">
+      <div style="min-width:260px"><table>
+        <tr><td>Planned quantity</td><td><strong>${wo.qty} ${esc(wo.uom)}</strong></td></tr>
+        ${already>0?`<tr><td>Already built</td><td>${already} ${esc(wo.uom)}</td></tr>`:""}
+        <tr><td>Produced <strong>this build</strong></td><td><input class="qtyinput" type="number" id="actualQty" value="${r.actualQty}"></td></tr>
+        <tr><td>Shrink / scrap</td><td><input class="qtyinput" type="number" id="shrinkQty" value="${r.shrinkQty}"></td></tr>
+        <tr><td>Cumulative yield</td><td><strong>${round(yld,1)}%</strong></td></tr></table>
+        <button class="btn ghost sm" id="recalc" style="margin-top:8px">↻ Update</button></div>
+      <div style="min-width:280px"><div class="panel" style="background:var(--soft)"><h3>Signed production form</h3>
+        <p class="note">Upload the completed/signed copy from the floor. On finalize this attaches to the Assembly Build and sets <strong>"Signed Copy Received"</strong> in NetSuite.</p>
+        <div class="drop" id="formDrop" style="padding:20px"><p style="margin:0">📄 ${wo.signedForm?esc(wo.signedForm):"Drop or click to upload signed form (PDF/JPG)"}</p>
+          <input type="file" id="formFile" style="display:none"></div>
+        ${wo.signedReceived?`<div class="banner ok" style="margin-top:10px">✓ Signed copy received ${esc(wo.signedDate)}</div>`:""}</div></div></div>
+    <div class="row" style="margin-top:8px"><button class="btn primary" data-adv="6">Finalize &amp; process build →</button><button class="btn ghost" data-adv="4">← Back</button></div></div>`;}
+
+function stage6(wo){const r=wo.results;const already=wo.producedQty||0;const thisB=round(+r.actualQty||0,2);const after=round(already+thisB,2);const remaining=round(wo.qty-after,2);
+  const lotLines=Object.entries(wo.lotAssignments||{}).flatMap(([sku,a])=>a.picks.map(p=>`${sku}: ${p.lot} (${p.qty})`));
+  const subs=Object.entries(wo.substitutions||{}).map(([o,s])=>`${o} → ${s.sku} (${s.reason})`);
+  const summary=`<div class="kv" style="max-width:560px">
+      <b>Finished good</b><span>${esc(wo.name)} (${esc(wo.sku)})</span>
+      <b>Finished lot</b><span><code class="mono">${esc(wo.finishedLot)}</code></span>
+      <b>Consumed lots</b><span>${lotLines.map(esc).join("<br>")||"—"}</span>
+      <b>Substitutions</b><span>${subs.length?subs.map(esc).join("<br>"):"none"}</span>
+      <b>Signed QA form</b><span>${wo.signedReceived?`✓ ${esc(wo.signedForm)} (${esc(wo.signedDate)})`:'<span class="tag warn">not received</span>'}</span></div>`;
+  if(wo.completed)return `<div class="panel"><h3>6 · Build complete</h3>
+    <div class="banner ok">✓ Build posted to NetSuite (mock). ${wo.closedShort?`Closed short at ${wo.producedQty} of ${wo.qty} ${esc(wo.uom)}.`:`Finished lot <code class="mono">${esc(wo.finishedLot)}</code> received (${wo.producedQty} ${esc(wo.uom)}).`}</div>
+    ${summary}${buildsTable(wo)}<div class="row" style="margin-top:12px"><button class="btn primary" data-go="dashboard">Done — back to dashboard</button></div></div>`;
+  // open WO: either first build, or partially built awaiting more
+  if(wo.partiallyBuilt)return `<div class="panel"><h3>6 · Partial build recorded</h3>
+    <div class="banner warn">Partially built: <strong>${already}</strong> of ${wo.qty} ${esc(wo.uom)} · <strong>${remaining}</strong> remaining. The work order stays open until closed.</div>
+    ${summary}${buildsTable(wo)}<div class="row" style="margin-top:12px">
+      <button class="btn primary" id="buildMore">+ Record another build (${remaining} ${esc(wo.uom)})</button>
+      <button class="btn ghost" id="markDoneWO">✓ Mark complete (accept ${already} as final)</button>
+      <button class="btn ghost" id="closeShort">Close short</button></div></div>`;
+  return `<div class="panel"><h3>6 · Finalize &amp; process build</h3>
+    <div class="banner info">Producing <strong>${thisB}</strong> ${esc(wo.uom)} this build${remaining>0?` (planned ${wo.qty}; ${remaining} would remain after).`:` — completes the work order.`} Posting consumes component lots and receives the finished lot.</div>
+    ${summary}
+    <div class="banner info" style="margin-top:14px">On finalize (live): <code class="mono">assemblybuild</code> created · component lots consumed · <strong>Signed Copy Received</strong> set via API · scanned form attached via the browser connector.</div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="processBuild">✓ Process this build</button><button class="btn ghost" data-adv="5">← Back</button></div></div>`;}
+function buildsTable(wo){if(!wo.builds.length)return "";
+  return `<div class="panel" style="background:var(--soft);margin-top:12px"><h3>Build log</h3>
+    <table><thead><tr><th>#</th><th>Qty</th><th>Finished lot</th><th>Date</th></tr></thead>
+    <tbody>${wo.builds.map((b,i)=>`<tr><td>${i+1}</td><td>${b.qty} ${esc(wo.uom)}</td><td><code class="mono">${esc(b.lot)}</code></td><td>${esc(b.date)}</td></tr>`).join("")}</tbody></table></div>`;}
+
+/* ---------- traveler ---------- */
+function travelerHTML(wo){const comps=effectiveComponents(wo);const allerg=woAllergens(wo);
+  const rows=comps.map(c=>{const a=(wo.lotAssignments||{})[c.sku];const lots=a?a.picks.map(p=>p.lot).join(", "):(c.lot?"___":"n/a");
+    const al=NetSuite.allergensOf(c.sku);return `<tr><td>${c.sku}${c.substituted?" (sub)":""}</td><td>${c.name}${al.length?` <strong>[${al.join(", ")}]</strong>`:""}</td><td>${c.required} ${c.uom}</td><td>${lots}</td><td style="min-width:70px">&nbsp;</td></tr>`;}).join("");
+  return `<div style="border:1px solid var(--line);border-radius:10px;padding:18px" id="traveler">
+    <div class="spread"><div><div style="font-size:18px;font-weight:700">PRODUCTION ORDER — ${wo.id}</div><div class="note">Vic's Foods · ${wo.location}</div></div>
+      <div style="text-align:right"><div><strong>${wo.name}</strong> (${wo.sku})</div><div class="note">Build ${wo.qty} ${wo.uom} · ${wo.buildDate}</div></div></div>
+    <div style="margin:12px 0;padding:8px 12px;border:2px solid ${allerg.length?'#9a3412':'#cbd5e1'};border-radius:8px;background:${allerg.length?'#fff7ed':'#f8fafc'};font-size:13px">
+      <strong>ALLERGENS:</strong> ${allerg.length?allerg.join(" · ").toUpperCase():"NONE DECLARED"} &nbsp;—&nbsp; confirm line cleared &amp; allergen changeover complete before run.</div>
+    <div class="kv" style="margin:12px 0"><b>Finished lot</b><span>${wo.finishedLot||"________"}</span></div>
+    <table><thead><tr><th>Component</th><th>Description</th><th>Required</th><th>Lot(s)</th><th>Actual used</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="row" style="margin-top:18px;gap:40px"><div>Operator: ____________________</div><div>QA: ____________________</div><div>Date: __________</div></div></div>`;}
+function printTraveler(wo){const w=window.open("","_blank");
+  w.document.write(`<html><head><title>${wo.id} Production Order</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+   .note{color:#666;font-size:12px}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}th,td{border:1px solid #ccc;padding:7px;text-align:left}
+   .spread{display:flex;justify-content:space-between}.kv b{color:#666;margin-right:8px}</style></head>
+   <body>${travelerHTML(wo).replace(/var\(--line\)/g,'#ccc')}<script>window.print()<\/script></body></html>`);w.document.close();}
+
+/* ---------- wiring ---------- */
+function wire(){
+  document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
+  document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openWO(b.dataset.open));
+  document.querySelectorAll("[data-adv]").forEach(b=>b.onclick=()=>advance(+b.dataset.adv));
+  document.querySelectorAll("[data-filter]").forEach(b=>b.onclick=()=>{state.dateFilter.mode=b.dataset.filter;render();});
+  const fApply=document.getElementById("fApply");if(fApply)fApply.onclick=()=>{state.dateFilter.from=document.getElementById("fFrom").value||"";state.dateFilter.to=document.getElementById("fTo").value||"";render();};
+
+  // saved views
+  const saveView=document.getElementById("saveView");if(saveView)saveView.onclick=()=>saveCurrentView();
+  document.querySelectorAll("[data-applyview]").forEach(b=>b.onclick=()=>applyView(+b.dataset.applyview));
+  document.querySelectorAll("[data-delview]").forEach(b=>b.onclick=()=>delView(+b.dataset.delview));
+
+  // production management selection / mass delete
+  document.querySelectorAll("[data-selrow]").forEach(c=>c.onchange=()=>{const id=c.dataset.selrow;const i=state.selected.indexOf(id);
+    if(c.checked&&i<0)state.selected.push(id);else if(!c.checked&&i>=0)state.selected.splice(i,1);render();});
+  const selAll=document.getElementById("selAll");if(selAll)selAll.onchange=()=>{const vis=state.workOrders.filter(inDateFilter);
+    if(selAll.checked)vis.forEach(x=>{if(!state.selected.includes(x.id))state.selected.push(x.id);});
+    else{const ids=vis.map(x=>x.id);state.selected=state.selected.filter(s=>!ids.includes(s));}render();};
+  const selClear=document.getElementById("selClear");if(selClear)selClear.onclick=()=>{state.selected=[];render();};
+  const bulkDelete=document.getElementById("bulkDelete");if(bulkDelete)bulkDelete.onclick=()=>{
+    const targets=state.selected.filter(id=>{const x=state.workOrders.find(y=>y.id===id);return x&&notStarted(x);});
+    if(!targets.length)return;if(!confirm(`Delete ${targets.length} unstarted work order(s)? This cannot be undone.`))return;
+    let n=0;targets.forEach(id=>{if(deleteWO(id))n++;});toast(`Deleted ${n} work order(s)`);render();};
+
+  // per-row delete (unstarted) & mark-complete (partial)
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{const id=b.dataset.del;const w=state.workOrders.find(x=>x.id===id);if(!w)return;
+    if(!confirm(`Delete ${id} (${w.name})? It hasn't been started.`))return;deleteWO(id);toast(`Deleted ${id}`);render();});
+  document.querySelectorAll("[data-markdone]").forEach(b=>b.onclick=()=>{const id=b.dataset.markdone;const w=state.workOrders.find(x=>x.id===id);if(!w)return;
+    if(!confirm(`Mark ${id} complete at ${w.producedQty} of ${w.qty} ${w.uom}? The remaining ${round(w.qty-w.producedQty,2)} ${w.uom} will not be built.`))return;
+    markComplete(id);toast(`${id} marked complete`);render();});
+
+  // compact CSV import (Production dashboard + empty state), sample & template
+  const csvFile=document.getElementById("csvFile");
+  document.querySelectorAll("[data-importcsv]").forEach(b=>b.onclick=()=>csvFile&&csvFile.click());
+  if(csvFile)csvFile.onchange=e=>{if(e.target.files[0])readFile(e.target.files[0]);};
+  document.querySelectorAll("[data-loadsample]").forEach(b=>b.onclick=()=>ingestUpload(parseCSV(SAMPLE_CSV)));
+  document.querySelectorAll("[data-template]").forEach(b=>b.onclick=()=>dlTemplate());
+  const showErrs=document.getElementById("showErrs");if(showErrs)showErrs.onclick=()=>{state._showErrs=!state._showErrs;render();};
+  const clearErrs=document.getElementById("clearErrs");if(clearErrs)clearErrs.onclick=()=>{state.uploadErrors=[];state._showErrs=false;render();};
+
+  // forecasting & planning → production
+  document.querySelectorAll("[data-fcrow]").forEach(c=>c.onchange=()=>{const sku=c.dataset.fcrow;const i=state.fcSelected.indexOf(sku);
+    if(c.checked&&i<0)state.fcSelected.push(sku);else if(!c.checked&&i>=0)state.fcSelected.splice(i,1);render();});
+  const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{state.fcSelected=fcSelAll.checked?repackRows().map(r=>r.sku):[];render();};
+  document.querySelectorAll("[data-fcqty]").forEach(inp=>inp.onchange=()=>{state.fcQty[inp.dataset.fcqty]=Math.max(0,round(+inp.value||0,0));render();});
+  const fcDate=document.getElementById("fcDate");if(fcDate)fcDate.onchange=()=>{state.fcDate=fcDate.value;};
+  const fcSend=document.getElementById("fcSend");if(fcSend)fcSend.onclick=()=>sendToProduction();
+
+  // inventory where-used → forward trace
+  document.querySelectorAll("[data-where]").forEach(a=>a.onclick=e=>{e.preventDefault();state.traceMode="forward";state.traceQuery=a.dataset.where;go("trace");});
+
+  // substitution
+  document.querySelectorAll("[data-subopen]").forEach(b=>b.onclick=()=>{const wo=getWO();wo._subOpen=wo._subOpen===b.dataset.subopen?null:b.dataset.subopen;render();});
+  document.querySelectorAll("[data-usesub]").forEach(b=>b.onclick=()=>{const wo=getWO();const orig=b.dataset.usesub;
+    const reason=(document.getElementById("reason-"+orig)||{}).value||REASONS[0];
+    wo.substitutions[orig]={sku:b.dataset.alt,reason};wo._subOpen=null;wo.lotAssignments=null;toast(`Substituted ${orig} → ${b.dataset.alt}`);render();});
+  document.querySelectorAll("[data-revert]").forEach(a=>a.onclick=e=>{e.preventDefault();const wo=getWO();delete wo.substitutions[a.dataset.revert];wo.lotAssignments=null;render();});
+
+  // manual lot override
+  document.querySelectorAll("[data-lotsel]").forEach(s=>s.onchange=()=>{const wo=getWO();const c=s.dataset.lotsel,i=+s.dataset.i;
+    const o=lotsFor(c).find(x=>x.lot===s.value);wo.lotAssignments[c].picks[i].lot=s.value;wo.lotAssignments[c].picks[i].expiry=o?o.expiry:"";render();});
+  document.querySelectorAll("[data-lotqty]").forEach(inp=>inp.onchange=()=>{const wo=getWO();wo.lotAssignments[inp.dataset.lotqty].picks[+inp.dataset.i].qty=round(+inp.value||0,2);render();});
+  document.querySelectorAll("[data-lotdel]").forEach(b=>b.onclick=()=>{const wo=getWO();wo.lotAssignments[b.dataset.lotdel].picks.splice(+b.dataset.i,1);render();});
+  document.querySelectorAll("[data-lotadd]").forEach(b=>b.onclick=()=>{const wo=getWO();const c=b.dataset.lotadd;const o=lotsFor(c)[0]||{lot:"",expiry:"",qty:0};
+    (wo.lotAssignments[c]=wo.lotAssignments[c]||{picks:[]}).picks.push({lot:o.lot,expiry:o.expiry,qty:0});render();});
+
+  // stage1 edit
+  const woUpdate=document.getElementById("woUpdate");if(woUpdate)woUpdate.onclick=()=>{const wo=getWO();
+    wo.qty=+document.getElementById("woQty").value||0;wo.buildDate=document.getElementById("woDate").value||wo.buildDate;
+    wo.location=document.getElementById("woLoc").value||wo.location;wo.lotAssignments=null;wo.finishedLot=genLotCode(wo);wo.results.actualQty=wo.qty;toast("Work order updated");render();};
+
+  // stage3
+  const refefo=document.getElementById("refefo");if(refefo)refefo.onclick=()=>{fefoAssign(getWO());render();};
+  const finLot=document.getElementById("finLot");if(finLot)finLot.onchange=()=>getWO().finishedLot=finLot.value.trim();
+  const resetLot=document.getElementById("resetLot");if(resetLot)resetLot.onclick=()=>{const wo=getWO();wo.finishedLot=genLotCode(wo);render();};
+  const printPO=document.getElementById("printPO");if(printPO)printPO.onclick=()=>printTraveler(getWO());
+
+  // stage5/6
+  const recalc=document.getElementById("recalc");if(recalc)recalc.onclick=()=>{const wo=getWO();
+    wo.results.actualQty=+document.getElementById("actualQty").value||0;wo.results.shrinkQty=+document.getElementById("shrinkQty").value||0;render();};
+  const formDrop=document.getElementById("formDrop"),formFile=document.getElementById("formFile");
+  if(formDrop){formDrop.onclick=()=>formFile.click();
+    formFile.onchange=e=>{const f=e.target.files[0];if(f){const wo=getWO();wo.signedForm=f.name;wo.signedReceived=true;wo.signedDate=today();toast("Signed form attached");render();}};}
+  const proc=document.getElementById("processBuild");if(proc)proc.onclick=()=>{processBuild(getWO());toast("Build posted to NetSuite (mock)");};
+  const buildMore=document.getElementById("buildMore");if(buildMore)buildMore.onclick=()=>{const wo=getWO();wo.partiallyBuilt=false;wo.stage=5;
+    wo.results.actualQty=round(wo.qty-wo.producedQty,2);wo.results.shrinkQty=0;render();};
+  const closeShort=document.getElementById("closeShort");if(closeShort)closeShort.onclick=()=>{const wo=getWO();wo.completed=true;wo.closedShort=true;wo.status="Closed (short)";toast("Work order closed short");render();};
+  const markDoneWO=document.getElementById("markDoneWO");if(markDoneWO)markDoneWO.onclick=()=>{const wo=getWO();markComplete(wo.id);toast("Marked complete");render();};
+
+  // history
+  const histGo=document.getElementById("histGo");if(histGo)histGo.onclick=()=>{state.historyQuery=document.getElementById("histInput").value;render();};
+  const histInput=document.getElementById("histInput");if(histInput)histInput.onkeydown=e=>{if(e.key==="Enter"){state.historyQuery=histInput.value;render();}};
+  const histClear=document.getElementById("histClear");if(histClear)histClear.onclick=()=>{state.historyQuery="";render();};
+
+  // inventory search
+  const invGo=document.getElementById("invGo");if(invGo)invGo.onclick=()=>{state.invQuery=document.getElementById("invInput").value;render();};
+  const invInput=document.getElementById("invInput");if(invInput)invInput.onkeydown=e=>{if(e.key==="Enter"){state.invQuery=invInput.value;render();}};
+  const invClear=document.getElementById("invClear");if(invClear)invClear.onclick=()=>{state.invQuery="";render();};
+
+  // reports
+  document.querySelectorAll("[data-rmode]").forEach(b=>b.onclick=()=>{state.reportMode=b.dataset.rmode;render();});
+  const rDate=document.getElementById("rDate");if(rDate)rDate.onchange=()=>{state.reportDate=rDate.value;render();};
+  const dlProd=document.getElementById("dlProd");if(dlProd)dlProd.onclick=()=>downloadProdCSV();
+
+  // trace
+  document.querySelectorAll("[data-trace]").forEach(b=>b.onclick=()=>{state.traceMode=b.dataset.trace;render();});
+  const traceGo=document.getElementById("traceGo");if(traceGo)traceGo.onclick=()=>{state.traceQuery=document.getElementById("traceInput").value;render();};
+  const traceInput=document.getElementById("traceInput");if(traceInput)traceInput.onkeydown=e=>{if(e.key==="Enter"){state.traceQuery=traceInput.value;render();}};
+  const traceClear=document.getElementById("traceClear");if(traceClear)traceClear.onclick=()=>{state.traceQuery="";render();};
+}
+function readFile(f){const r=new FileReader();r.onload=e=>{try{ingestUpload(parseCSV(e.target.result));}catch(err){toast("Parse error: "+err.message);}};r.readAsText(f);}
+function dlTemplate(){const b=new Blob([SAMPLE_CSV.split("\n")[0]+"\n"],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.click();}
+render();
+</script>
+</body>
+</html>
