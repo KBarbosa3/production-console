@@ -158,11 +158,11 @@ const NetSuite={
   // Repack-department planning data: finished-good on-hand, period demand forecast, par/safety stock,
   // and units sold in the last 90 days (drives average daily sales → days on hand).
   _repackItems:[
-    {sku:"RP-101",onHandFG:8,forecast:30,par:6,sales90:180},
-    {sku:"RP-102",onHandFG:25,forecast:90,par:20,sales90:450},
-    {sku:"RP-103",onHandFG:60,forecast:150,par:40,sales90:540},
-    {sku:"RP-104",onHandFG:12,forecast:50,par:15,sales90:900},
-    {sku:"RP-105",onHandFG:30,forecast:80,par:20,sales90:270},
+    {sku:"RP-101",onHandFG:8,forecast:30,par:6,sales90:180,cls:"Retail",category:"Sauce",department:"Repack",size:"16oz",pack:"12/cs"},
+    {sku:"RP-102",onHandFG:25,forecast:90,par:20,sales90:450,cls:"Retail",category:"Protein",department:"Repack",size:"2lb",pack:"Tray"},
+    {sku:"RP-103",onHandFG:60,forecast:150,par:40,sales90:540,cls:"Retail",category:"Produce",department:"Repack",size:"1lb",pack:"Bag"},
+    {sku:"RP-104",onHandFG:12,forecast:50,par:15,sales90:900,cls:"Retail",category:"Dry Goods",department:"Repack",size:"5lb",pack:"Bag"},
+    {sku:"RP-105",onHandFG:30,forecast:80,par:20,sales90:270,cls:"Retail",category:"Protein",department:"Repack",size:"1lb",pack:"Tray"},
   ],
   // Standard labor hours per finished unit, plus shop labor rate and overhead rate ($/labor hour).
   _labor:{"FG-1001":0.05,"FG-1002":0.08,"FG-1003":0.06,"FG-1004":0.02,
@@ -192,8 +192,10 @@ const STAGES=[
 ];
 const state={page:"forecast",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
   traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
-  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcMaxDays:""};
+  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcFilters:[],
+  prefs:{positions:[{name:"Line Operator",rate:18},{name:"Packer",rate:16},{name:"Supervisor",rate:26}],stdRate:18,ohRate:12}};
 try{state.savedViews=JSON.parse(localStorage.getItem("vf_saved_views"))||[];}catch(e){}
+try{const p=JSON.parse(localStorage.getItem("vf_prefs"));if(p&&p.positions)state.prefs=p;}catch(e){}
 let SEQ=1000;
 // Sample schedule uses dates relative to today so the default "Today" filter always shows production.
 function dPlus(n){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+n);return localISO(d);}
@@ -261,6 +263,7 @@ function markComplete(id){const w=state.workOrders.find(x=>x.id===id);
 
 /* ---------- saved dashboard views ---------- */
 function persistViews(){try{localStorage.setItem("vf_saved_views",JSON.stringify(state.savedViews));}catch(e){}}
+function persistPrefs(){try{localStorage.setItem("vf_prefs",JSON.stringify(state.prefs));}catch(e){}}
 function saveCurrentView(){const f=state.dateFilter;
   const dft=f.mode==="custom"?`${f.from||"…"} → ${f.to||"…"}`:({today:"Today",tomorrow:"Tomorrow",week:"This week",all:"All dates"}[f.mode]||f.mode);
   const name=(window.prompt("Name this view",dft)||"").trim();if(!name)return;
@@ -322,10 +325,11 @@ function processBuild(wo){const q=round(wo.results.actualQty,2);
 const NAV=[{id:"forecast",label:"Forecasting & Planning",icon:"📈"},
   {id:"dashboard",label:"Production Management",icon:"▣"},
   {id:"inventory",label:"Inventory",icon:"▦"},{id:"history",label:"Production History",icon:"🗂"},
-  {id:"reports",label:"Reports",icon:"📊"},{id:"trace",label:"Traceability",icon:"🔎"}];
+  {id:"reports",label:"Reports",icon:"📊"},{id:"trace",label:"Traceability",icon:"🔎"},
+  {id:"settings",label:"Settings",icon:"⚙"}];
 function go(p){state.page=p;if(p!=="process")state.openWO=null;render();}
 function render(){renderNav();document.getElementById("main").innerHTML=
-  ({dashboard:viewDashboard,forecast:viewForecast,process:viewProcess,inventory:viewInventory,history:viewHistory,reports:viewReports,trace:viewTrace}[state.page])();wire();}
+  ({dashboard:viewDashboard,forecast:viewForecast,process:viewProcess,inventory:viewInventory,history:viewHistory,reports:viewReports,trace:viewTrace,settings:viewSettings}[state.page])();wire();}
 function renderNav(){document.getElementById("nav").innerHTML=NAV.map(n=>{
   const c=n.id==="dashboard"?state.workOrders.filter(w=>!w.completed).length:0;const b=c?`<span class="badge">${c}</span>`:"";
   return `<button data-go="${n.id}" class="${state.page===n.id?'active':''}"><span>${n.icon}</span><span>${n.label}</span>${b}</button>`;}).join("");}
@@ -413,16 +417,38 @@ function viewDashboard(){const w=state.workOrders;
       </tr>`).join(""):`<tr><td colspan="8" class="empty">No work orders match this date filter.${f.mode!=="all"?' <button class="btn ghost sm" data-filter="all">Show all dates</button>':''}</td></tr>`}</tbody></table></div>`;}
 
 /* ---------- forecasting & planning (repack department) ---------- */
-function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1);
-  const maxDays=parseFloat(state.fcMaxDays);const filtering=!isNaN(maxDays);
-  const rows=filtering?all.filter(r=>r.days!=null&&r.days<=maxDays):all;
+// stackable forecast filters: each row is {field, op, value}; rows AND together.
+const FC_FIELDS=[{k:"daysOnHand",l:"Days on hand",type:"num"},{k:"onHandFG",l:"On-hand FG",type:"num"},
+  {k:"forecast",l:"Forecast",type:"num"},{k:"par",l:"Par",type:"num"},{k:"suggested",l:"Suggested",type:"num"},{k:"avgDaily",l:"Avg daily sales",type:"num"},
+  {k:"cls",l:"Class",type:"text"},{k:"category",l:"Item category",type:"text"},{k:"department",l:"Department",type:"text"},{k:"size",l:"Size",type:"text"},{k:"pack",l:"Pack",type:"text"}];
+const FC_OPS_NUM=["<","<=","=",">=",">"];const FC_OPS_TEXT=["is","is not","contains"];
+function fcFieldDef(k){return FC_FIELDS.find(f=>f.k===k)||FC_FIELDS[0];}
+function fcFieldVal(r,field){return field==="daysOnHand"?(r.days==null?Infinity:r.days):(r[field]!=null?r[field]:0);}
+function fcMatch(r,f){const def=fcFieldDef(f.field);
+  if(def.type==="text"){const v=String(r[f.field]==null?"":r[f.field]).toLowerCase();const t=String(f.value||"").trim().toLowerCase();if(!t)return true;
+    if(f.op==="is")return v===t;if(f.op==="is not")return v!==t;if(f.op==="contains")return v.includes(t);return true;}
+  const t=parseFloat(f.value);if(isNaN(t))return true;const v=fcFieldVal(r,f.field);
+  switch(f.op){case"<":return v<t;case"<=":return v<=t;case"=":return v===t;case">=":return v>=t;case">":return v>t;}return true;}
+function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1);const filters=state.fcFilters;
+  const rows=all.filter(r=>filters.every(f=>fcMatch(r,f)));
   const belowPar=all.filter(r=>r.belowPar).length;const totalForecast=all.reduce((s,r)=>s+r.forecast,0);
   const lowStock=all.filter(r=>r.days!=null&&r.days<7).length;
   const selRows=all.filter(r=>state.fcSelected.includes(r.sku));
   const selUnits=selRows.reduce((s,r)=>s+round(fcQtyFor(r),0),0);
   const allSel=rows.length&&rows.every(r=>state.fcSelected.includes(r.sku));
+  const filterRows=filters.map((f,i)=>{const def=fcFieldDef(f.field);const ops=def.type==="text"?FC_OPS_TEXT:FC_OPS_NUM;
+    const distinct=def.type==="text"?[...new Set(all.map(r=>r[f.field]).filter(v=>v!=null))]:[];
+    const valInput=def.type==="text"
+      ?`<input class="txt" list="fcvals-${i}" data-filtval="${i}" value="${esc(f.value)}" placeholder="value" style="width:150px"><datalist id="fcvals-${i}">${distinct.map(v=>`<option value="${esc(v)}"></option>`).join("")}</datalist>`
+      :`<input class="qtyinput" type="number" step="any" data-filtval="${i}" value="${esc(f.value)}" placeholder="value">`;
+    return `<div class="row" style="gap:6px;margin-bottom:6px">
+      <span class="note" style="width:42px">${i===0?'Where':'and'}</span>
+      <select class="txt" data-filtfield="${i}">${FC_FIELDS.map(fd=>`<option value="${fd.k}" ${f.field===fd.k?'selected':''}>${fd.l}</option>`).join("")}</select>
+      <select class="txt" data-filtop="${i}">${ops.map(o=>`<option ${f.op===o?'selected':''}>${o}</option>`).join("")}</select>
+      ${valInput}
+      <button class="btn ghost sm" data-filtdel="${i}" title="Remove filter">✕</button></div>`;}).join("");
   return `<h2 class="page">Forecasting &amp; Planning</h2>
-    <p class="sub"><strong>Repack department</strong> — demand forecast and <strong>days of inventory on hand</strong>. Find items about to run out, set a build qty, and send them to <strong>Production</strong>.</p>
+    <p class="sub"><strong>Repack department</strong> — demand forecast and <strong>days of inventory on hand</strong>. Stack filters to find items at risk, set a build qty, and send them to <strong>Production</strong>.</p>
     <div class="cards">
       <div class="card brand"><div class="n">${all.length}</div><div class="l">Repack items</div></div>
       <div class="card"><div class="n">${lowStock}</div><div class="l">Under 7 days on hand</div></div>
@@ -430,17 +456,17 @@ function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1)
       <div class="card"><div class="n">${totalForecast.toLocaleString()}</div><div class="l">Forecast units</div></div>
       <div class="card"><div class="n">${selRows.length}</div><div class="l">Selected</div></div></div>
     <div class="panel">
-      <div class="row" style="margin-bottom:10px;gap:10px"><span class="note" style="margin-right:2px">Show items with days on hand under:</span>
-        <input type="number" class="txt" id="fcDays" value="${esc(state.fcMaxDays)}" placeholder="e.g. 5" min="0" style="width:90px">
-        ${filtering?`<button class="btn ghost sm" id="fcDaysClear">Clear</button>`:""}
-        <span class="note">${filtering?`${rows.length} of ${all.length} items at or under ${maxDays} days`:`Days on hand = on-hand ÷ avg daily sales (last 90 days)`}</span></div>
+      <div class="subpanel" style="margin-bottom:12px"><div class="spread" style="margin-bottom:8px">
+        <span class="note"><strong>Filters</strong>${filters.length?` · ${rows.length} of ${all.length} match`:''}</span>
+        <span class="row" style="gap:6px"><button class="btn ghost sm" id="fcAddFilter">+ Add filter</button>${filters.length?`<button class="btn ghost sm" id="fcClearFilters">Clear all</button>`:''}</span></div>
+        ${filterRows||'<div class="note">No filters — showing all items. Add a filter (e.g. Days on hand &lt; 5) to narrow the list; add more rows to stack conditions.</div>'}</div>
       <div class="row" style="margin-bottom:12px;gap:10px">
         <span class="note">Build date for new orders:</span>
         <input type="date" class="txt" id="fcDate" value="${esc(date)}">
         <button class="btn primary sm" id="fcSend" ${selRows.length?'':'disabled'}>➕ Send ${selRows.length||''} to Production →</button>
         <span class="note" style="margin-left:auto">${selRows.length} selected · ${selUnits.toLocaleString()} units</span></div>
       <table><thead><tr>
-        <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all"></th>
+        <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all shown"></th>
         <th>Item</th><th>Allergens</th><th>On-hand FG</th><th>Avg/day</th><th>Days on hand</th><th>Forecast</th><th>Par</th><th>Suggested</th><th>Build qty</th></tr></thead>
       <tbody>${rows.length?rows.map(r=>`<tr>
         <td><input type="checkbox" data-fcrow="${r.sku}" ${state.fcSelected.includes(r.sku)?'checked':''}></td>
@@ -451,8 +477,26 @@ function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1)
         <td>${daysTag(r)}</td>
         <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.suggested}</strong></td>
         <td><input class="qtyinput" type="number" min="0" data-fcqty="${r.sku}" value="${fcQtyFor(r)}"></td>
-      </tr>`).join(""):`<tr><td colspan="10" class="empty">No items at or under ${maxDays} days on hand.</td></tr>`}</tbody></table>
-      <div class="note" style="margin-top:8px">Days on hand = on-hand ÷ average daily sales (last 90 days). Suggested build = forecast + par − on-hand. Build qty editable before sending.</div></div>`;}
+      </tr>`).join(""):`<tr><td colspan="10" class="empty">No items match the current filters.</td></tr>`}</tbody></table>
+      <div class="note" style="margin-top:8px">Days on hand = on-hand ÷ average daily sales (last 90 days). Suggested build = forecast + par − on-hand.</div></div>`;}
+
+/* ---------- settings ---------- */
+function viewSettings(){const p=state.prefs;
+  return `<h2 class="page">Settings</h2>
+    <p class="sub">Preferences for production cost calculations. Saved to this browser.</p>
+    <div class="panel"><h3>Preferences · Labor positions &amp; rates</h3>
+      <p class="note">Assign an hourly rate to each position. Positions are selectable when entering actual labor on a build (Stage 5).</p>
+      <table style="max-width:520px"><thead><tr><th>Position</th><th>Rate ($/hr)</th><th></th></tr></thead>
+      <tbody>${p.positions.map((pos,i)=>`<tr>
+        <td><input class="txt" data-posname="${i}" value="${esc(pos.name)}" style="width:240px"></td>
+        <td><input class="qtyinput" type="number" min="0" step="any" data-posrate="${i}" value="${pos.rate}"></td>
+        <td><button class="btn ghost sm" data-posdel="${i}" ${p.positions.length<=1?'disabled':''} title="Remove">✕</button></td></tr>`).join("")}</tbody></table>
+      <button class="btn ghost sm" id="posAdd" style="margin-top:8px">+ Add position</button></div>
+    <div class="panel"><h3>Preferences · Standard rates</h3>
+      <div class="row" style="gap:24px;flex-wrap:wrap">
+        <div><div class="note">Standard labor rate ($/hr) — theoretical cost</div><input class="qtyinput" type="number" min="0" step="any" id="prefStdRate" value="${p.stdRate}"></div>
+        <div><div class="note">Overhead rate ($/labor hour)</div><input class="qtyinput" type="number" min="0" step="any" id="prefOhRate" value="${p.ohRate}"></div></div>
+      <div class="note" style="margin-top:10px">Theoretical labor cost = standard hours × standard rate. Overhead is absorbed per actual labor hour. These feed the Landed Cost calculation in Stage 5/6.</div></div>`;}
 
 /* ---------- inventory ---------- */
 function viewInventory(){const q=(state.invQuery||"").trim();const ql=q.toLowerCase();const inv=NetSuite._inventory;
@@ -667,11 +711,12 @@ function usageRows(wo){const made=round(+wo.results.actualQty||0,2);
     const cost=NetSuite.costOf(c.sku);const theoCost=round(theo*cost,2);const actCost=round(actual*cost,2);const costVar=round(actCost-theoCost,2);
     return{sku:c.sku,name:c.name,uom:c.uom,qtyPer:c.qtyPer,theo,actual,variance,pct,flag:Math.abs(pct)>2,cost,theoCost,actCost,costVar};});}
 function yieldPct(wo){const made=(wo.producedQty||0)+(+wo.results.actualQty||0);return wo.qty?round(made/wo.qty*100,1):0;}
-function laborCalc(wo){const made=round(+wo.results.actualQty||0,2);const std=NetSuite.laborOf(wo.sku);
-  const theoHrs=round(std.hrsPerUnit*made,2);const theoLabor=round(theoHrs*std.rate,2);const theoOH=round(theoHrs*std.ohRate,2);
-  const la=wo.laborActual||{};const actHrs=la.hrs!=null?round(+la.hrs,2):theoHrs;const actRate=la.rate!=null?round(+la.rate,2):std.rate;
-  const actLabor=round(actHrs*actRate,2);const actOH=round(actHrs*std.ohRate,2);
-  return{std,theoHrs,theoLabor,theoOH,actHrs,actRate,actLabor,actOH};}
+function laborCalc(wo){const made=round(+wo.results.actualQty||0,2);const hrsPerUnit=NetSuite.laborOf(wo.sku).hrsPerUnit;
+  const stdRate=state.prefs.stdRate,ohRate=state.prefs.ohRate;
+  const theoHrs=round(hrsPerUnit*made,2);const theoLabor=round(theoHrs*stdRate,2);const theoOH=round(theoHrs*ohRate,2);
+  const la=wo.laborActual||{};const actHrs=la.hrs!=null?round(+la.hrs,2):theoHrs;const actRate=la.rate!=null?round(+la.rate,2):stdRate;
+  const actLabor=round(actHrs*actRate,2);const actOH=round(actHrs*ohRate,2);
+  return{stdRate,ohRate,theoHrs,theoLabor,theoOH,actHrs,actRate,actLabor,actOH};}
 function landedCost(wo){const uv=usageRows(wo);
   const matTheo=round(uv.reduce((s,r)=>s+r.theoCost,0),2);const matAct=round(uv.reduce((s,r)=>s+r.actCost,0),2);
   const l=laborCalc(wo);
@@ -709,9 +754,10 @@ function landedCostPanel(wo){const c=landedCost(wo);const l=c.l;const y=yieldPct
       <h3 style="margin:0">Landed cost &amp; yield <span class="note" style="font-weight:400">— theoretical vs actual</span></h3>
       <button class="btn ghost sm" id="printCost">🖨 Print cost report</button></div>
     <div class="row" style="gap:16px;align-items:flex-end;margin-bottom:12px">
+      <div><div class="note">Position</div><select class="txt" id="laborPos">${state.prefs.positions.map(pos=>`<option value="${esc(pos.name)}" ${(wo.laborActual&&wo.laborActual.position===pos.name)?'selected':''}>${esc(pos.name)} (${money(pos.rate)}/hr)</option>`).join("")}</select></div>
       <div><div class="note">Actual labor hours</div><input class="qtyinput" type="number" min="0" step="any" id="laborHrs" value="${l.actHrs}"></div>
       <div><div class="note">Labor rate ($/hr)</div><input class="qtyinput" type="number" min="0" step="any" id="laborRate" value="${l.actRate}"></div>
-      <div class="note">Standard ${l.theoHrs} hr @ ${money(l.std.rate)}/hr · overhead ${money(l.std.ohRate)}/hr applied on actual hours</div></div>
+      <div class="note">Standard ${l.theoHrs} hr @ ${money(l.stdRate)}/hr · overhead ${money(l.ohRate)}/hr · rates from <strong>Settings</strong></div></div>
     <table style="max-width:600px"><thead><tr><th>Cost element</th><th>Theoretical</th><th>Actual</th><th>Variance</th></tr></thead>
       <tbody>${vrow("Materials",c.mat)}${vrow("Labor",c.labor)}${vrow("Overhead",c.oh)}
       <tr style="font-weight:700"><td>Total landed cost</td><td>${money(c.theo)}</td><td>${money(c.act)}</td><td><span style="color:${vcolor}">${c.variance>0?'+':''}${money(c.variance)} (${c.variance>0?'+':''}${c.pct}%)</span></td></tr></tbody></table>
@@ -719,7 +765,7 @@ function landedCostPanel(wo){const c=landedCost(wo);const l=c.l;const y=yieldPct
       <div class="card brand"><div class="n">${money(c.unitAct)}</div><div class="l">Actual landed cost / ${esc(wo.uom)}</div></div>
       <div class="card"><div class="n">${money(c.unitTheo)}</div><div class="l">Standard cost / ${esc(wo.uom)}</div></div>
       <div class="card"><div class="n">${y}%</div><div class="l">Yield</div></div></div>
-    <div class="note">Landed cost = materials + labor + overhead. Overhead absorbed at ${money(l.std.ohRate)}/labor hour. Yield = produced ÷ planned.</div></div>`;}
+    <div class="note">Landed cost = materials + labor + overhead. Overhead absorbed at ${money(l.ohRate)}/labor hour. Yield = produced ÷ planned.</div></div>`;}
 function printCostReport(wo){const uv=usageRows(wo);const c=landedCost(wo);const l=c.l;const y=yieldPct(wo);
   const rows=uv.map(r=>`<tr><td>${esc(r.sku)} — ${esc(r.name)}</td><td>${money(r.cost)}/${esc(r.uom)}</td><td>${r.theo}</td><td>${r.actual}</td><td>${r.variance>0?'+':''}${r.variance} (${r.variance>0?'+':''}${r.pct}%)</td><td>${money(r.theoCost)}</td><td>${money(r.actCost)}</td><td>${r.costVar>0?'+':''}${money(r.costVar)}</td></tr>`).join("");
   const srow=(label,t,a)=>`<tr><td>${label}</td><td style="text-align:right">${money(t)}</td><td style="text-align:right">${money(a)}</td><td style="text-align:right">${(a-t)>0?'+':''}${money(round(a-t,2))}</td></tr>`;
@@ -864,11 +910,15 @@ function wire(){
   // forecasting & planning → production
   document.querySelectorAll("[data-fcrow]").forEach(c=>c.onchange=()=>{const sku=c.dataset.fcrow;const i=state.fcSelected.indexOf(sku);
     if(c.checked&&i<0)state.fcSelected.push(sku);else if(!c.checked&&i>=0)state.fcSelected.splice(i,1);render();});
-  const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{const md=parseFloat(state.fcMaxDays);
-    const disp=repackRows().filter(r=>isNaN(md)||(r.days!=null&&r.days<=md));state.fcSelected=fcSelAll.checked?disp.map(r=>r.sku):[];render();};
+  const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{const disp=repackRows().filter(r=>state.fcFilters.every(f=>fcMatch(r,f)));state.fcSelected=fcSelAll.checked?disp.map(r=>r.sku):[];render();};
   document.querySelectorAll("[data-fcqty]").forEach(inp=>inp.onchange=()=>{state.fcQty[inp.dataset.fcqty]=Math.max(0,round(+inp.value||0,0));render();});
-  const fcDays=document.getElementById("fcDays");if(fcDays)fcDays.onchange=()=>{state.fcMaxDays=fcDays.value;render();};
-  const fcDaysClear=document.getElementById("fcDaysClear");if(fcDaysClear)fcDaysClear.onclick=()=>{state.fcMaxDays="";render();};
+  // stackable filters
+  const fcAddFilter=document.getElementById("fcAddFilter");if(fcAddFilter)fcAddFilter.onclick=()=>{state.fcFilters.push({field:"daysOnHand",op:"<",value:""});render();};
+  const fcClearFilters=document.getElementById("fcClearFilters");if(fcClearFilters)fcClearFilters.onclick=()=>{state.fcFilters=[];render();};
+  document.querySelectorAll("[data-filtfield]").forEach(s=>s.onchange=()=>{const f=state.fcFilters[+s.dataset.filtfield];const oldT=fcFieldDef(f.field).type;const newT=fcFieldDef(s.value).type;f.field=s.value;if(newT!==oldT){f.op=newT==="text"?"is":"<";f.value="";}render();});
+  document.querySelectorAll("[data-filtop]").forEach(s=>s.onchange=()=>{state.fcFilters[+s.dataset.filtop].op=s.value;render();});
+  document.querySelectorAll("[data-filtval]").forEach(inp=>inp.onchange=()=>{state.fcFilters[+inp.dataset.filtval].value=inp.value;render();});
+  document.querySelectorAll("[data-filtdel]").forEach(b=>b.onclick=()=>{state.fcFilters.splice(+b.dataset.filtdel,1);render();});
   const fcDate=document.getElementById("fcDate");if(fcDate)fcDate.onchange=()=>{state.fcDate=fcDate.value;};
   const fcSend=document.getElementById("fcSend");if(fcSend)fcSend.onclick=()=>sendToProduction();
 
@@ -908,7 +958,16 @@ function wire(){
   document.querySelectorAll("[data-usage]").forEach(inp=>inp.onchange=()=>{const wo=getWO();(wo.usage=wo.usage||{})[inp.dataset.usage]=Math.max(0,round(+inp.value||0,2));render();});
   const laborHrs=document.getElementById("laborHrs");if(laborHrs)laborHrs.onchange=()=>{const wo=getWO();(wo.laborActual=wo.laborActual||{}).hrs=Math.max(0,round(+laborHrs.value||0,2));render();};
   const laborRate=document.getElementById("laborRate");if(laborRate)laborRate.onchange=()=>{const wo=getWO();(wo.laborActual=wo.laborActual||{}).rate=Math.max(0,round(+laborRate.value||0,2));render();};
+  const laborPos=document.getElementById("laborPos");if(laborPos)laborPos.onchange=()=>{const wo=getWO();const pos=state.prefs.positions.find(p=>p.name===laborPos.value);(wo.laborActual=wo.laborActual||{}).position=laborPos.value;if(pos)wo.laborActual.rate=pos.rate;render();};
   const printCost=document.getElementById("printCost");if(printCost)printCost.onclick=()=>printCostReport(getWO());
+
+  // settings / preferences
+  document.querySelectorAll("[data-posname]").forEach(inp=>inp.onchange=()=>{state.prefs.positions[+inp.dataset.posname].name=inp.value;persistPrefs();render();});
+  document.querySelectorAll("[data-posrate]").forEach(inp=>inp.onchange=()=>{state.prefs.positions[+inp.dataset.posrate].rate=Math.max(0,round(+inp.value||0,2));persistPrefs();render();});
+  document.querySelectorAll("[data-posdel]").forEach(b=>b.onclick=()=>{state.prefs.positions.splice(+b.dataset.posdel,1);persistPrefs();render();});
+  const posAdd=document.getElementById("posAdd");if(posAdd)posAdd.onclick=()=>{state.prefs.positions.push({name:"New position",rate:state.prefs.stdRate});persistPrefs();render();};
+  const prefStdRate=document.getElementById("prefStdRate");if(prefStdRate)prefStdRate.onchange=()=>{state.prefs.stdRate=Math.max(0,round(+prefStdRate.value||0,2));persistPrefs();render();};
+  const prefOhRate=document.getElementById("prefOhRate");if(prefOhRate)prefOhRate.onchange=()=>{state.prefs.ohRate=Math.max(0,round(+prefOhRate.value||0,2));persistPrefs();render();};
   // production results document (attach when finalizing / marking complete)
   const resultsDrop=document.getElementById("resultsDrop"),resultsFile=document.getElementById("resultsFile");
   if(resultsDrop){resultsDrop.onclick=()=>resultsFile.click();
