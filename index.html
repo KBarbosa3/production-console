@@ -198,7 +198,7 @@ const STAGES=[
 ];
 const state={page:"forecast",mode:"repack",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
   traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
-  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcFilters:[],
+  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcFilters:[],fcHorizon:30,
   prefs:{positions:[{name:"Line Operator",rate:18},{name:"Packer",rate:16},{name:"Supervisor",rate:26}],stdRate:18,ohRate:12}};
 try{state.savedViews=JSON.parse(localStorage.getItem("vf_saved_views"))||[];}catch(e){}
 try{const p=JSON.parse(localStorage.getItem("vf_prefs"));if(p&&p.positions)state.prefs=p;}catch(e){}
@@ -301,15 +301,17 @@ function ingestUpload(rows){const errors=[];let ok=0;
   toast(`Imported ${ok} order(s)`+(errors.length?` · ${errors.length} flagged`:""));
   state.page="dashboard";render();}
 /* ---------- forecasting → production ---------- */
-function repackRows(){return NetSuite._repackItems.map(it=>{const a=NetSuite.getAssembly(it.sku)||{name:it.sku,uom:"EA"};
-  const suggested=Math.max(0,Math.round(it.forecast+it.par-it.onHandFG));
+function fcHorizon(){const h=Math.round(+state.fcHorizon||0);return h>0?h:30;}
+function repackRows(){const h=fcHorizon();return NetSuite._repackItems.map(it=>{const a=NetSuite.getAssembly(it.sku)||{name:it.sku,uom:"EA"};
   const avgDaily=round((it.sales90||0)/90,2);const days=avgDaily>0?round(it.onHandFG/avgDaily,1):null;
   // On order = open (not-yet-completed) work-order quantity still to build for this item.
   const onOrder=Math.round(state.workOrders.filter(w=>w.sku===it.sku&&!w.completed).reduce((s,w)=>s+Math.max(0,(w.qty||0)-(w.producedQty||0)),0));
-  const net=Math.max(0,Math.round(it.forecast-it.onHandFG-onOrder));
+  const periodForecast=Math.round(avgDaily*h);              // projected units sold over the horizon
+  const net=Math.max(0,periodForecast-it.onHandFG-onOrder); // recommended build to cover the period
   const trend=it.salesPrev30?Math.round((it.sales30-it.salesPrev30)/it.salesPrev30*100):null;
   const stockout=(days!=null&&isFinite(days))?dPlus(Math.floor(days)):null;
-  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par,avgDaily,days,onOrder,net,trend,stockout};});}
+  const short=days!=null&&days<=h;                           // runs out within the forecast window
+  return{...it,name:a.name,uom:a.uom,avgDaily,days,onOrder,periodForecast,net,trend,stockout,short};});}
 // Days-on-hand chip: red under 3 days, amber under 7, green otherwise.
 function daysTag(r){if(r.days==null)return '<span class="note">—</span>';
   const cls=r.days<3?'bad':(r.days<7?'warn':'ok');return `<span class="tag ${cls}">${r.days} d</span>`;}
@@ -318,7 +320,7 @@ function stockoutCell(r){if(r.stockout==null)return '<span class="note">—</spa
   const cls=r.days<3?'bad':(r.days<7?'warn':'neutral');return `<span class="tag ${cls}">${esc(r.stockout)}</span>`;}
 function trendTag(r){if(r.trend==null)return '<span class="note">—</span>';const up=r.trend>0,dn=r.trend<0;
   return `<span style="color:${up?'var(--ok)':(dn?'var(--bad)':'var(--muted)')};font-weight:600">${up?'▲':(dn?'▼':'■')} ${Math.abs(r.trend)}%</span>`;}
-function fcQtyFor(it){return state.fcQty[it.sku]!=null?state.fcQty[it.sku]:it.suggested;}
+function fcQtyFor(it){return state.fcQty[it.sku]!=null?state.fcQty[it.sku]:it.net;}
 function sendToProduction(){const date=state.fcDate||dPlus(1);const sel=state.fcSelected.slice();if(!sel.length)return;
   const rows=repackRows();let n=0;
   sel.forEach(sku=>{const it=rows.find(x=>x.sku===sku);const a=NetSuite.getAssembly(sku);if(!it||!a)return;
@@ -435,8 +437,8 @@ function viewDashboard(){const w=state.workOrders;
 /* ---------- forecasting & planning (repack department) ---------- */
 // stackable forecast filters: each row is {field, op, value}; rows AND together.
 const FC_FIELDS=[{k:"daysOnHand",l:"Days on hand",type:"num"},{k:"onHandFG",l:"On-hand FG",type:"num"},
-  {k:"forecast",l:"Forecast",type:"num"},{k:"par",l:"Par",type:"num"},{k:"suggested",l:"Suggested",type:"num"},{k:"avgDaily",l:"Avg daily sales",type:"num"},
-  {k:"onOrder",l:"On order",type:"num"},{k:"net",l:"Net requirement",type:"num"},{k:"trend",l:"Sales trend %",type:"num"},
+  {k:"avgDaily",l:"Avg daily sales",type:"num"},{k:"onOrder",l:"On order",type:"num"},
+  {k:"periodForecast",l:"Forecast (period)",type:"num"},{k:"net",l:"Net requirement",type:"num"},{k:"trend",l:"Sales trend %",type:"num"},
   {k:"cls",l:"Class",type:"text"},{k:"category",l:"Item category",type:"text"},{k:"department",l:"Department",type:"text"},{k:"size",l:"Size",type:"text"},{k:"pack",l:"Pack",type:"text"}];
 const FC_OPS_NUM=["<","<=","=",">=",">"];const FC_OPS_TEXT=["is","is not","contains"];
 function fcFieldDef(k){return FC_FIELDS.find(f=>f.k===k)||FC_FIELDS[0];}
@@ -452,10 +454,9 @@ function viewForecast(){
     <div class="panel"><div class="empty">🥖 <strong>Bakery Production forecasting is in development.</strong><br><br>
     The planning view for bakery will differ from repack — e.g. recipe scaling, mix / proof / bake scheduling, and shelf-life windows.<br><br>
     <button class="btn ghost" data-mode="repack">← Switch to Repack Production</button></div></div>`;
-  const all=repackRows();const date=state.fcDate||dPlus(1);const filters=state.fcFilters;
+  const all=repackRows();const date=state.fcDate||dPlus(1);const filters=state.fcFilters;const h=fcHorizon();
   const rows=all.filter(r=>filters.every(f=>fcMatch(r,f)));
-  const belowPar=all.filter(r=>r.belowPar).length;const totalForecast=all.reduce((s,r)=>s+r.forecast,0);
-  const lowStock=all.filter(r=>r.days!=null&&r.days<7).length;
+  const shortCount=all.filter(r=>r.short).length;const demand=all.reduce((s,r)=>s+r.periodForecast,0);
   const selRows=all.filter(r=>state.fcSelected.includes(r.sku));
   const selUnits=selRows.reduce((s,r)=>s+round(fcQtyFor(r),0),0);
   const allSel=rows.length&&rows.every(r=>state.fcSelected.includes(r.sku));
@@ -471,18 +472,20 @@ function viewForecast(){
       ${valInput}
       <button class="btn ghost sm" data-filtdel="${i}" title="Remove filter">✕</button></div>`;}).join("");
   return `<h2 class="page">Forecasting &amp; Planning</h2>
-    <p class="sub"><strong>Repack department</strong> — demand forecast and <strong>days of inventory on hand</strong>. Stack filters to find items at risk, set a build qty, and send them to <strong>Production</strong>.</p>
+    <p class="sub"><strong>Repack department</strong> — project demand over a horizon and flag items that run short within it. Stack filters, set a build qty, and send to <strong>Production</strong>.</p>
     <div class="cards">
       <div class="card brand"><div class="n">${all.length}</div><div class="l">Repack items</div></div>
-      <div class="card"><div class="n">${lowStock}</div><div class="l">Under 7 days on hand</div></div>
-      <div class="card"><div class="n">${belowPar}</div><div class="l">Below par</div></div>
-      <div class="card"><div class="n">${totalForecast.toLocaleString()}</div><div class="l">Forecast units</div></div>
+      <div class="card"><div class="n">${shortCount}</div><div class="l">Run short within ${h}d</div></div>
+      <div class="card"><div class="n">${demand.toLocaleString()}</div><div class="l">Demand next ${h}d (units)</div></div>
       <div class="card"><div class="n">${selRows.length}</div><div class="l">Selected</div></div></div>
     <div class="panel">
+      <div class="row" style="margin-bottom:12px;gap:8px"><span class="note"><strong>Forecast period:</strong></span>
+        ${[15,30,60,90].map(d=>`<button class="btn ${h===d?'primary':'ghost'} sm" data-horizon="${d}">${d}d</button>`).join("")}
+        <input type="number" class="txt" id="fcHorizonInput" value="${h}" min="1" style="width:80px"><span class="note">days · projecting demand &amp; stockouts over this window</span></div>
       <div class="subpanel" style="margin-bottom:12px"><div class="spread" style="margin-bottom:8px">
         <span class="note"><strong>Filters</strong>${filters.length?` · ${rows.length} of ${all.length} match`:''}</span>
         <span class="row" style="gap:6px"><button class="btn ghost sm" id="fcPrint">🖨 Print plan</button><button class="btn ghost sm" id="fcAddFilter">+ Add filter</button>${filters.length?`<button class="btn ghost sm" id="fcClearFilters">Clear all</button>`:''}</span></div>
-        ${filterRows||'<div class="note">No filters — showing all items. Add a filter (e.g. Days on hand &lt; 5) to narrow the list; add more rows to stack conditions.</div>'}</div>
+        ${filterRows||'<div class="note">No filters — showing all items. Add a filter (e.g. Net req &gt; 0) to narrow the list; add more rows to stack conditions.</div>'}</div>
       <div class="row" style="margin-bottom:12px;gap:10px">
         <span class="note">Build date for new orders:</span>
         <input type="date" class="txt" id="fcDate" value="${esc(date)}">
@@ -490,29 +493,30 @@ function viewForecast(){
         <span class="note" style="margin-left:auto">${selRows.length} selected · ${selUnits.toLocaleString()} units</span></div>
       <div style="overflow-x:auto"><table><thead><tr>
         <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all shown"></th>
-        <th>Item</th><th>On-hand FG</th><th>On order</th><th>Avg/day</th><th>Days on hand</th><th>Stockout</th><th>Trend 30d</th><th>Forecast</th><th>Par</th><th>Net req</th><th>Suggested</th><th>Build qty</th></tr></thead>
-      <tbody>${rows.length?rows.map(r=>`<tr>
+        <th>Item</th><th>On-hand FG</th><th>On order</th><th>Avg/day</th><th>Days on hand</th><th>Stockout</th><th>Trend 30d</th><th>Forecast (${h}d)</th><th>Net req</th><th>Build qty</th></tr></thead>
+      <tbody>${rows.length?rows.map(r=>`<tr${r.short?' style="background:#fff7ed"':''}>
         <td><input type="checkbox" data-fcrow="${r.sku}" ${state.fcSelected.includes(r.sku)?'checked':''}></td>
         <td><strong>${esc(r.sku)}</strong><div class="note">${esc(r.name)}</div></td>
-        <td>${r.onHandFG} ${esc(r.uom)} ${r.belowPar?'<span class="tag warn">below par</span>':''}</td>
+        <td>${r.onHandFG} ${esc(r.uom)}</td>
         <td>${r.onOrder||0}</td>
         <td>${r.avgDaily}/day</td>
         <td>${daysTag(r)}</td>
         <td>${stockoutCell(r)}</td>
         <td>${trendTag(r)}</td>
-        <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.net}</strong></td><td><strong>${r.suggested}</strong></td>
+        <td><strong>${r.periodForecast}</strong>${r.short?' <span class="tag warn">short</span>':''}</td>
+        <td><strong>${r.net}</strong></td>
         <td><input class="qtyinput" type="number" min="0" data-fcqty="${r.sku}" value="${fcQtyFor(r)}"></td>
-      </tr>`).join(""):`<tr><td colspan="13" class="empty">No items match the current filters.</td></tr>`}</tbody></table></div>
-      <div class="note" style="margin-top:8px">Days on hand = on-hand ÷ average daily sales (last 90 days). Suggested build = forecast + par − on-hand.</div></div>`;}
+      </tr>`).join(""):`<tr><td colspan="11" class="empty">No items match the current filters.</td></tr>`}</tbody></table></div>
+      <div class="note" style="margin-top:8px">Forecast (${h}d) = avg daily sales × ${h} days. Net req = forecast − on-hand − on order. Rows shaded if they run out within ${h} days.</div></div>`;}
 
 // Print the Forecasting & Planning view (current filters), landscape.
-function printForecast(){const all=repackRows();const rows=all.filter(r=>state.fcFilters.every(f=>fcMatch(r,f)));
+function printForecast(){const all=repackRows();const rows=all.filter(r=>state.fcFilters.every(f=>fcMatch(r,f)));const h=fcHorizon();
   const filterDesc=state.fcFilters.length?state.fcFilters.map(f=>`${fcFieldDef(f.field).l} ${f.op} ${f.value}`).join(" and "):"All items";
-  const body=rows.map(r=>`<tr><td>${esc(r.sku)} — ${esc(r.name)}</td><td>${r.onHandFG} ${esc(r.uom)}${r.belowPar?" (below par)":""}</td><td>${r.onOrder||0}</td><td>${r.avgDaily}</td><td>${r.days==null?'—':r.days}</td><td>${esc(r.stockout||'—')}</td><td>${r.trend==null?'—':(r.trend>0?'+':'')+r.trend+'%'}</td><td>${r.forecast}</td><td>${r.par}</td><td>${r.net}</td><td>${r.suggested}</td></tr>`).join("")||'<tr><td colspan="11">No items match the filters.</td></tr>';
+  const body=rows.map(r=>`<tr><td>${esc(r.sku)} — ${esc(r.name)}</td><td>${r.onHandFG} ${esc(r.uom)}</td><td>${r.onOrder||0}</td><td>${r.avgDaily}</td><td>${r.days==null?'—':r.days}</td><td>${esc(r.stockout||'—')}</td><td>${r.trend==null?'—':(r.trend>0?'+':'')+r.trend+'%'}</td><td>${r.periodForecast}${r.short?' (short)':''}</td><td>${r.net}</td></tr>`).join("")||'<tr><td colspan="9">No items match the filters.</td></tr>';
   const inner=`<style>@page{size:landscape;margin:12mm}</style><h1>Vic's Foods — Forecasting &amp; Planning (Repack)</h1>
-    <div class="note">Filters: ${esc(filterDesc)} · ${rows.length} item(s) · printed ${esc(today())}</div>
-    <table><thead><tr><th>Item</th><th>On-hand</th><th>On order</th><th>Avg/day</th><th>Days on hand</th><th>Stockout</th><th>Trend 30d</th><th>Forecast</th><th>Par</th><th>Net req</th><th>Suggested</th></tr></thead><tbody>${body}</tbody></table>
-    <div class="note" style="margin-top:10px">Days on hand = on-hand ÷ avg daily sales (90d). Net req = forecast − on-hand − on order. Suggested = forecast + par − on-hand.</div>`;
+    <div class="note">Forecast period: ${h} days · Filters: ${esc(filterDesc)} · ${rows.length} item(s) · printed ${esc(today())}</div>
+    <table><thead><tr><th>Item</th><th>On-hand</th><th>On order</th><th>Avg/day</th><th>Days on hand</th><th>Stockout</th><th>Trend 30d</th><th>Forecast (${h}d)</th><th>Net req</th></tr></thead><tbody>${body}</tbody></table>
+    <div class="note" style="margin-top:10px">Forecast (${h}d) = avg daily sales × ${h} days. Net req = forecast − on-hand − on order.</div>`;
   printDoc("Forecasting & Planning",inner);}
 
 /* ---------- settings ---------- */
@@ -950,6 +954,8 @@ function wire(){
   const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{const disp=repackRows().filter(r=>state.fcFilters.every(f=>fcMatch(r,f)));state.fcSelected=fcSelAll.checked?disp.map(r=>r.sku):[];render();};
   document.querySelectorAll("[data-fcqty]").forEach(inp=>inp.onchange=()=>{state.fcQty[inp.dataset.fcqty]=Math.max(0,round(+inp.value||0,0));render();});
   // stackable filters
+  document.querySelectorAll("[data-horizon]").forEach(b=>b.onclick=()=>{state.fcHorizon=+b.dataset.horizon;render();});
+  const fcHorizonInput=document.getElementById("fcHorizonInput");if(fcHorizonInput)fcHorizonInput.onchange=()=>{state.fcHorizon=Math.max(1,Math.round(+fcHorizonInput.value||30));render();};
   const fcPrint=document.getElementById("fcPrint");if(fcPrint)fcPrint.onclick=()=>printForecast();
   const fcAddFilter=document.getElementById("fcAddFilter");if(fcAddFilter)fcAddFilter.onclick=()=>{state.fcFilters.push({field:"daysOnHand",op:"<",value:""});render();};
   const fcClearFilters=document.getElementById("fcClearFilters");if(fcClearFilters)fcClearFilters.onclick=()=>{state.fcFilters=[];render();};
