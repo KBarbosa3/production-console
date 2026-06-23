@@ -155,14 +155,19 @@ const NetSuite={
     "PK-CS12":{onHand:1000,committed:0,lots:[]},"PK-TRAY2":{onHand:6000,committed:0,lots:[]},
     "PK-BAG1":{onHand:7000,committed:0,lots:[]},"PK-BAG5":{onHand:2000,committed:0,lots:[]},"PK-TRAY1":{onHand:6000,committed:0,lots:[]},
   },
-  // Repack-department planning data: finished-good on-hand, period demand forecast, par/safety stock.
+  // Repack-department planning data: finished-good on-hand, period demand forecast, par/safety stock,
+  // and units sold in the last 90 days (drives average daily sales → days on hand).
   _repackItems:[
-    {sku:"RP-101",onHandFG:8,forecast:30,par:6},
-    {sku:"RP-102",onHandFG:25,forecast:90,par:20},
-    {sku:"RP-103",onHandFG:60,forecast:150,par:40},
-    {sku:"RP-104",onHandFG:12,forecast:50,par:15},
-    {sku:"RP-105",onHandFG:30,forecast:80,par:20},
+    {sku:"RP-101",onHandFG:8,forecast:30,par:6,sales90:180},
+    {sku:"RP-102",onHandFG:25,forecast:90,par:20,sales90:450},
+    {sku:"RP-103",onHandFG:60,forecast:150,par:40,sales90:540},
+    {sku:"RP-104",onHandFG:12,forecast:50,par:15,sales90:900},
+    {sku:"RP-105",onHandFG:30,forecast:80,par:20,sales90:270},
   ],
+  // Standard labor hours per finished unit, plus shop labor rate and overhead rate ($/labor hour).
+  _labor:{"FG-1001":0.05,"FG-1002":0.08,"FG-1003":0.06,"FG-1004":0.02,
+    "RP-101":0.03,"RP-102":0.02,"RP-103":0.015,"RP-104":0.015,"RP-105":0.02},
+  _laborRate:18, _ohRate:12,
   // Standard landed cost per component, in $ per the component's UOM. Drives theoretical-vs-actual cost.
   _costs:{
     "RM-FLOUR":0.45,"RM-FLOUR-ALT":0.52,"RM-BUTTER":3.20,"RM-CHKN":2.80,"RM-CHKN-ALT":2.60,
@@ -176,6 +181,7 @@ const NetSuite={
   nameOf(sku){return this._names[sku]||sku;},
   allergensOf(sku){return this._allergens[sku]||[];},
   costOf(sku){return this._costs[sku]||0;},
+  laborOf(sku){return {hrsPerUnit:this._labor[sku]!=null?this._labor[sku]:0.02, rate:this._laborRate, ohRate:this._ohRate};},
 };
 
 const REASONS=["Primary short / out of stock","Primary on QA hold","Cost / availability","Approved formula equivalent","Other"];
@@ -186,7 +192,7 @@ const STAGES=[
 ];
 const state={page:"forecast",workOrders:[],openWO:null,dateFilter:{mode:"today",from:"",to:""},
   traceQuery:"",traceMode:"back",historyQuery:"",uploadErrors:[],reportMode:"daily",reportDate:"",
-  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:""};
+  savedViews:[],selected:[],fcSelected:[],fcQty:{},fcDate:"",invQuery:"",fcMaxDays:""};
 try{state.savedViews=JSON.parse(localStorage.getItem("vf_saved_views"))||[];}catch(e){}
 let SEQ=1000;
 // Sample schedule uses dates relative to today so the default "Today" filter always shows production.
@@ -269,7 +275,7 @@ function makeWO(o){SEQ++;const wo={id:"WO"+SEQ,ref:o.ref||"",sku:o.sku,name:o.na
   hasBom:true,stage:1,status:"Draft",source:o.source||"manual",
   substitutions:{},committed:false,lotAssignments:null,finishedLot:"",
   results:{actualQty:o.qty,shrinkQty:0},producedQty:0,partiallyBuilt:false,closedShort:false,builds:[],
-  resultsDoc:"",resultsDocDate:"",usage:{},completed:false};
+  resultsDoc:"",resultsDocDate:"",usage:{},laborActual:null,completed:false};
   state.workOrders.push(wo);return wo;}
 // Allergens for a finished-good SKU (aggregated from its BOM) — used in the Forecasting table.
 function skuAllergens(sku){const a=NetSuite.getAssembly(sku);if(!a)return[];const set=new Set();
@@ -288,7 +294,11 @@ function ingestUpload(rows){const errors=[];let ok=0;
 /* ---------- forecasting → production ---------- */
 function repackRows(){return NetSuite._repackItems.map(it=>{const a=NetSuite.getAssembly(it.sku)||{name:it.sku,uom:"EA"};
   const suggested=Math.max(0,Math.round(it.forecast+it.par-it.onHandFG));
-  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par};});}
+  const avgDaily=round((it.sales90||0)/90,2);const days=avgDaily>0?round(it.onHandFG/avgDaily,1):null;
+  return{...it,name:a.name,uom:a.uom,allergens:skuAllergens(it.sku),suggested,belowPar:it.onHandFG<it.par,avgDaily,days};});}
+// Days-on-hand chip: red under 3 days, amber under 7, green otherwise.
+function daysTag(r){if(r.days==null)return '<span class="note">—</span>';
+  const cls=r.days<3?'bad':(r.days<7?'warn':'ok');return `<span class="tag ${cls}">${r.days} d</span>`;}
 function fcQtyFor(it){return state.fcQty[it.sku]!=null?state.fcQty[it.sku]:it.suggested;}
 function sendToProduction(){const date=state.fcDate||dPlus(1);const sel=state.fcSelected.slice();if(!sel.length)return;
   const rows=repackRows();let n=0;
@@ -403,19 +413,27 @@ function viewDashboard(){const w=state.workOrders;
       </tr>`).join(""):`<tr><td colspan="8" class="empty">No work orders match this date filter.${f.mode!=="all"?' <button class="btn ghost sm" data-filter="all">Show all dates</button>':''}</td></tr>`}</tbody></table></div>`;}
 
 /* ---------- forecasting & planning (repack department) ---------- */
-function viewForecast(){const rows=repackRows();const date=state.fcDate||dPlus(1);
-  const belowPar=rows.filter(r=>r.belowPar).length;const totalForecast=rows.reduce((s,r)=>s+r.forecast,0);
-  const selRows=rows.filter(r=>state.fcSelected.includes(r.sku));
+function viewForecast(){const all=repackRows();const date=state.fcDate||dPlus(1);
+  const maxDays=parseFloat(state.fcMaxDays);const filtering=!isNaN(maxDays);
+  const rows=filtering?all.filter(r=>r.days!=null&&r.days<=maxDays):all;
+  const belowPar=all.filter(r=>r.belowPar).length;const totalForecast=all.reduce((s,r)=>s+r.forecast,0);
+  const lowStock=all.filter(r=>r.days!=null&&r.days<7).length;
+  const selRows=all.filter(r=>state.fcSelected.includes(r.sku));
   const selUnits=selRows.reduce((s,r)=>s+round(fcQtyFor(r),0),0);
   const allSel=rows.length&&rows.every(r=>state.fcSelected.includes(r.sku));
   return `<h2 class="page">Forecasting &amp; Planning</h2>
-    <p class="sub"><strong>Repack department</strong> — demand forecast vs. finished-goods on hand. Select items, set a build qty, and send them to <strong>Production</strong> as work orders.</p>
+    <p class="sub"><strong>Repack department</strong> — demand forecast and <strong>days of inventory on hand</strong>. Find items about to run out, set a build qty, and send them to <strong>Production</strong>.</p>
     <div class="cards">
-      <div class="card brand"><div class="n">${rows.length}</div><div class="l">Repack items</div></div>
+      <div class="card brand"><div class="n">${all.length}</div><div class="l">Repack items</div></div>
+      <div class="card"><div class="n">${lowStock}</div><div class="l">Under 7 days on hand</div></div>
       <div class="card"><div class="n">${belowPar}</div><div class="l">Below par</div></div>
       <div class="card"><div class="n">${totalForecast.toLocaleString()}</div><div class="l">Forecast units</div></div>
       <div class="card"><div class="n">${selRows.length}</div><div class="l">Selected</div></div></div>
     <div class="panel">
+      <div class="row" style="margin-bottom:10px;gap:10px"><span class="note" style="margin-right:2px">Show items with days on hand under:</span>
+        <input type="number" class="txt" id="fcDays" value="${esc(state.fcMaxDays)}" placeholder="e.g. 5" min="0" style="width:90px">
+        ${filtering?`<button class="btn ghost sm" id="fcDaysClear">Clear</button>`:""}
+        <span class="note">${filtering?`${rows.length} of ${all.length} items at or under ${maxDays} days`:`Days on hand = on-hand ÷ avg daily sales (last 90 days)`}</span></div>
       <div class="row" style="margin-bottom:12px;gap:10px">
         <span class="note">Build date for new orders:</span>
         <input type="date" class="txt" id="fcDate" value="${esc(date)}">
@@ -423,16 +441,18 @@ function viewForecast(){const rows=repackRows();const date=state.fcDate||dPlus(1
         <span class="note" style="margin-left:auto">${selRows.length} selected · ${selUnits.toLocaleString()} units</span></div>
       <table><thead><tr>
         <th style="width:26px"><input type="checkbox" id="fcSelAll" ${allSel?'checked':''} title="Select all"></th>
-        <th>Item</th><th>Allergens</th><th>On-hand FG</th><th>Forecast</th><th>Par</th><th>Suggested</th><th>Build qty</th></tr></thead>
-      <tbody>${rows.map(r=>`<tr>
+        <th>Item</th><th>Allergens</th><th>On-hand FG</th><th>Avg/day</th><th>Days on hand</th><th>Forecast</th><th>Par</th><th>Suggested</th><th>Build qty</th></tr></thead>
+      <tbody>${rows.length?rows.map(r=>`<tr>
         <td><input type="checkbox" data-fcrow="${r.sku}" ${state.fcSelected.includes(r.sku)?'checked':''}></td>
         <td><strong>${esc(r.sku)}</strong><div class="note">${esc(r.name)}</div></td>
         <td>${allergenTags(r.allergens)}</td>
         <td>${r.onHandFG} ${esc(r.uom)} ${r.belowPar?'<span class="tag warn">below par</span>':''}</td>
+        <td>${r.avgDaily}/day</td>
+        <td>${daysTag(r)}</td>
         <td>${r.forecast}</td><td>${r.par}</td><td><strong>${r.suggested}</strong></td>
         <td><input class="qtyinput" type="number" min="0" data-fcqty="${r.sku}" value="${fcQtyFor(r)}"></td>
-      </tr>`).join("")}</tbody></table>
-      <div class="note" style="margin-top:8px">Suggested build = forecast + par − on-hand. Build qty is editable per item before sending.</div></div>`;}
+      </tr>`).join(""):`<tr><td colspan="10" class="empty">No items at or under ${maxDays} days on hand.</td></tr>`}</tbody></table>
+      <div class="note" style="margin-top:8px">Days on hand = on-hand ÷ average daily sales (last 90 days). Suggested build = forecast + par − on-hand. Build qty editable before sending.</div></div>`;}
 
 /* ---------- inventory ---------- */
 function viewInventory(){const q=(state.invQuery||"").trim();const ql=q.toLowerCase();const inv=NetSuite._inventory;
@@ -647,11 +667,22 @@ function usageRows(wo){const made=round(+wo.results.actualQty||0,2);
     const cost=NetSuite.costOf(c.sku);const theoCost=round(theo*cost,2);const actCost=round(actual*cost,2);const costVar=round(actCost-theoCost,2);
     return{sku:c.sku,name:c.name,uom:c.uom,qtyPer:c.qtyPer,theo,actual,variance,pct,flag:Math.abs(pct)>2,cost,theoCost,actCost,costVar};});}
 function yieldPct(wo){const made=(wo.producedQty||0)+(+wo.results.actualQty||0);return wo.qty?round(made/wo.qty*100,1):0;}
+function laborCalc(wo){const made=round(+wo.results.actualQty||0,2);const std=NetSuite.laborOf(wo.sku);
+  const theoHrs=round(std.hrsPerUnit*made,2);const theoLabor=round(theoHrs*std.rate,2);const theoOH=round(theoHrs*std.ohRate,2);
+  const la=wo.laborActual||{};const actHrs=la.hrs!=null?round(+la.hrs,2):theoHrs;const actRate=la.rate!=null?round(+la.rate,2):std.rate;
+  const actLabor=round(actHrs*actRate,2);const actOH=round(actHrs*std.ohRate,2);
+  return{std,theoHrs,theoLabor,theoOH,actHrs,actRate,actLabor,actOH};}
 function landedCost(wo){const uv=usageRows(wo);
-  const theo=round(uv.reduce((s,r)=>s+r.theoCost,0),2);const act=round(uv.reduce((s,r)=>s+r.actCost,0),2);
+  const matTheo=round(uv.reduce((s,r)=>s+r.theoCost,0),2);const matAct=round(uv.reduce((s,r)=>s+r.actCost,0),2);
+  const l=laborCalc(wo);
+  const theo=round(matTheo+l.theoLabor+l.theoOH,2);const act=round(matAct+l.actLabor+l.actOH,2);
   const variance=round(act-theo,2);const pct=theo?round(variance/theo*100,1):0;const made=round(+wo.results.actualQty||0,2);
-  return{theo,act,variance,pct,made,unitTheo:made?round(theo/made,2):0,unitAct:made?round(act/made,2):0};}
+  return{l,mat:{theo:matTheo,act:matAct,v:round(matAct-matTheo,2)},
+    labor:{theo:l.theoLabor,act:l.actLabor,v:round(l.actLabor-l.theoLabor,2)},
+    oh:{theo:l.theoOH,act:l.actOH,v:round(l.actOH-l.theoOH,2)},
+    theo,act,variance,pct,made,unitTheo:made?round(theo/made,2):0,unitAct:made?round(act/made,2):0};}
 function money(n){return (n<0?"-$":"$")+Math.abs(+n||0).toFixed(2);}
+function varMoney(n){if(!n)return '<span class="note">$0.00</span>';return `<span class="tag ${n>0?'warn':'ok'}">${n>0?'+':''}${money(n)}</span>`;}
 function varianceTag(r){if(r.variance===0)return '<span class="tag neutral">on standard</span>';
   const over=r.variance>0;const cls=over?(r.flag?'bad':'warn'):'ok';const sign=over?'+':'';
   return `<span class="tag ${cls}">${sign}${r.variance} ${esc(r.uom)} · ${sign}${r.pct}%</span>`;}
@@ -671,29 +702,37 @@ function usageTable(wo){const uv=usageRows(wo);const made=round(+wo.results.actu
       <td>${varianceTag(r)}</td>
       <td>${costVarCell(r)}</td></tr>`).join("")}</tbody></table>
     <div class="note" style="margin-top:6px"><span class="tag warn">over</span> used more than standard · <span class="tag ok">under</span> used less · flagged <span class="tag bad">red</span> beyond ±2%.</div></div>`;}
-function landedCostPanel(wo){const lc=landedCost(wo);const y=yieldPct(wo);
-  const vcolor=lc.variance>0?'var(--bad)':(lc.variance<0?'var(--ok)':'inherit');
+function landedCostPanel(wo){const c=landedCost(wo);const l=c.l;const y=yieldPct(wo);
+  const vcolor=c.variance>0?'var(--bad)':(c.variance<0?'var(--ok)':'inherit');
+  const vrow=(label,o)=>`<tr><td>${label}</td><td>${money(o.theo)}</td><td>${money(o.act)}</td><td>${varMoney(o.v)}</td></tr>`;
   return `<div class="panel" style="margin-top:14px"><div class="spread" style="margin-bottom:10px">
       <h3 style="margin:0">Landed cost &amp; yield <span class="note" style="font-weight:400">— theoretical vs actual</span></h3>
       <button class="btn ghost sm" id="printCost">🖨 Print cost report</button></div>
-    <div class="cards">
-      <div class="card"><div class="n">${money(lc.theo)}</div><div class="l">Theoretical material cost</div></div>
-      <div class="card"><div class="n">${money(lc.act)}</div><div class="l">Actual material cost</div></div>
-      <div class="card"><div class="n" style="color:${vcolor}">${lc.variance>0?'+':''}${money(lc.variance)}</div><div class="l">Cost variance (${lc.variance>0?'+':''}${lc.pct}%)</div></div>
-      <div class="card brand"><div class="n">${money(lc.unitAct)}</div><div class="l">Actual landed cost / ${esc(wo.uom)}</div></div>
+    <div class="row" style="gap:16px;align-items:flex-end;margin-bottom:12px">
+      <div><div class="note">Actual labor hours</div><input class="qtyinput" type="number" min="0" step="any" id="laborHrs" value="${l.actHrs}"></div>
+      <div><div class="note">Labor rate ($/hr)</div><input class="qtyinput" type="number" min="0" step="any" id="laborRate" value="${l.actRate}"></div>
+      <div class="note">Standard ${l.theoHrs} hr @ ${money(l.std.rate)}/hr · overhead ${money(l.std.ohRate)}/hr applied on actual hours</div></div>
+    <table style="max-width:600px"><thead><tr><th>Cost element</th><th>Theoretical</th><th>Actual</th><th>Variance</th></tr></thead>
+      <tbody>${vrow("Materials",c.mat)}${vrow("Labor",c.labor)}${vrow("Overhead",c.oh)}
+      <tr style="font-weight:700"><td>Total landed cost</td><td>${money(c.theo)}</td><td>${money(c.act)}</td><td><span style="color:${vcolor}">${c.variance>0?'+':''}${money(c.variance)} (${c.variance>0?'+':''}${c.pct}%)</span></td></tr></tbody></table>
+    <div class="cards" style="margin-top:14px">
+      <div class="card brand"><div class="n">${money(c.unitAct)}</div><div class="l">Actual landed cost / ${esc(wo.uom)}</div></div>
+      <div class="card"><div class="n">${money(c.unitTheo)}</div><div class="l">Standard cost / ${esc(wo.uom)}</div></div>
       <div class="card"><div class="n">${y}%</div><div class="l">Yield</div></div></div>
-    <div class="note">Material landed cost only (component standard cost × usage). Labor &amp; overhead add on top in the live system. Yield = produced ÷ planned.</div></div>`;}
-function printCostReport(wo){const uv=usageRows(wo);const lc=landedCost(wo);const y=yieldPct(wo);
+    <div class="note">Landed cost = materials + labor + overhead. Overhead absorbed at ${money(l.std.ohRate)}/labor hour. Yield = produced ÷ planned.</div></div>`;}
+function printCostReport(wo){const uv=usageRows(wo);const c=landedCost(wo);const l=c.l;const y=yieldPct(wo);
   const rows=uv.map(r=>`<tr><td>${esc(r.sku)} — ${esc(r.name)}</td><td>${money(r.cost)}/${esc(r.uom)}</td><td>${r.theo}</td><td>${r.actual}</td><td>${r.variance>0?'+':''}${r.variance} (${r.variance>0?'+':''}${r.pct}%)</td><td>${money(r.theoCost)}</td><td>${money(r.actCost)}</td><td>${r.costVar>0?'+':''}${money(r.costVar)}</td></tr>`).join("");
+  const srow=(label,t,a)=>`<tr><td>${label}</td><td style="text-align:right">${money(t)}</td><td style="text-align:right">${money(a)}</td><td style="text-align:right">${(a-t)>0?'+':''}${money(round(a-t,2))}</td></tr>`;
   const inner=`<h1>Vic's Foods — Production Cost &amp; Usage Variance</h1>
-    <div class="note">${esc(wo.id)} · ${esc(wo.name)} (${esc(wo.sku)}) · produced ${lc.made} ${esc(wo.uom)} · yield ${y}% · printed ${esc(today())}</div>
+    <div class="note">${esc(wo.id)} · ${esc(wo.name)} (${esc(wo.sku)}) · produced ${c.made} ${esc(wo.uom)} · yield ${y}% · labor ${l.actHrs} hr @ ${money(l.actRate)}/hr · printed ${esc(today())}</div>
+    <h3 style="margin:16px 0 4px">Component usage &amp; cost</h3>
     <table><thead><tr><th>Component</th><th>Unit cost</th><th>Theo qty</th><th>Actual qty</th><th>Qty variance</th><th>Theo cost</th><th>Actual cost</th><th>Cost var</th></tr></thead><tbody>${rows}</tbody></table>
-    <table style="margin-top:16px;max-width:460px"><tbody>
-      <tr><td>Theoretical material cost</td><td style="text-align:right"><strong>${money(lc.theo)}</strong></td></tr>
-      <tr><td>Actual material cost</td><td style="text-align:right"><strong>${money(lc.act)}</strong></td></tr>
-      <tr><td>Cost variance</td><td style="text-align:right"><strong>${lc.variance>0?'+':''}${money(lc.variance)} (${lc.variance>0?'+':''}${lc.pct}%)</strong></td></tr>
-      <tr><td>Actual landed cost / ${esc(wo.uom)}</td><td style="text-align:right"><strong>${money(lc.unitAct)}</strong></td></tr>
-      <tr><td>Yield</td><td style="text-align:right"><strong>${y}%</strong></td></tr></tbody></table>`;
+    <h3 style="margin:16px 0 4px">Landed cost — theoretical vs actual</h3>
+    <table style="max-width:560px"><thead><tr><th>Cost element</th><th>Theoretical</th><th>Actual</th><th>Variance</th></tr></thead><tbody>
+      ${srow("Materials",c.mat.theo,c.mat.act)}${srow("Labor",c.labor.theo,c.labor.act)}${srow("Overhead",c.oh.theo,c.oh.act)}
+      <tr style="font-weight:700"><td>Total landed cost</td><td style="text-align:right">${money(c.theo)}</td><td style="text-align:right">${money(c.act)}</td><td style="text-align:right">${c.variance>0?'+':''}${money(c.variance)} (${c.variance>0?'+':''}${c.pct}%)</td></tr>
+      <tr><td>Landed cost / ${esc(wo.uom)}</td><td style="text-align:right">${money(c.unitTheo)}</td><td style="text-align:right">${money(c.unitAct)}</td><td></td></tr>
+      <tr><td>Yield</td><td style="text-align:right" colspan="3">${y}%</td></tr></tbody></table>`;
   printDoc("Production Cost Report",inner);}
 function stage5(wo){const r=wo.results;const already=wo.producedQty||0;const remaining=round(wo.qty-already,2);
   const yld=wo.qty?(already+(+r.actualQty||0))/wo.qty*100:0;
@@ -825,8 +864,11 @@ function wire(){
   // forecasting & planning → production
   document.querySelectorAll("[data-fcrow]").forEach(c=>c.onchange=()=>{const sku=c.dataset.fcrow;const i=state.fcSelected.indexOf(sku);
     if(c.checked&&i<0)state.fcSelected.push(sku);else if(!c.checked&&i>=0)state.fcSelected.splice(i,1);render();});
-  const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{state.fcSelected=fcSelAll.checked?repackRows().map(r=>r.sku):[];render();};
+  const fcSelAll=document.getElementById("fcSelAll");if(fcSelAll)fcSelAll.onchange=()=>{const md=parseFloat(state.fcMaxDays);
+    const disp=repackRows().filter(r=>isNaN(md)||(r.days!=null&&r.days<=md));state.fcSelected=fcSelAll.checked?disp.map(r=>r.sku):[];render();};
   document.querySelectorAll("[data-fcqty]").forEach(inp=>inp.onchange=()=>{state.fcQty[inp.dataset.fcqty]=Math.max(0,round(+inp.value||0,0));render();});
+  const fcDays=document.getElementById("fcDays");if(fcDays)fcDays.onchange=()=>{state.fcMaxDays=fcDays.value;render();};
+  const fcDaysClear=document.getElementById("fcDaysClear");if(fcDaysClear)fcDaysClear.onclick=()=>{state.fcMaxDays="";render();};
   const fcDate=document.getElementById("fcDate");if(fcDate)fcDate.onchange=()=>{state.fcDate=fcDate.value;};
   const fcSend=document.getElementById("fcSend");if(fcSend)fcSend.onclick=()=>sendToProduction();
 
@@ -862,8 +904,10 @@ function wire(){
   // stage5/6 — yield updates automatically on field change (no button needed)
   const actualQty=document.getElementById("actualQty");if(actualQty)actualQty.onchange=()=>{const wo=getWO();wo.results.actualQty=+actualQty.value||0;render();};
   const shrinkQty=document.getElementById("shrinkQty");if(shrinkQty)shrinkQty.onchange=()=>{const wo=getWO();wo.results.shrinkQty=+shrinkQty.value||0;render();};
-  // component actual usage (live variance + landed cost) and cost-report print
+  // component actual usage (live variance + landed cost), labor inputs, cost-report print
   document.querySelectorAll("[data-usage]").forEach(inp=>inp.onchange=()=>{const wo=getWO();(wo.usage=wo.usage||{})[inp.dataset.usage]=Math.max(0,round(+inp.value||0,2));render();});
+  const laborHrs=document.getElementById("laborHrs");if(laborHrs)laborHrs.onchange=()=>{const wo=getWO();(wo.laborActual=wo.laborActual||{}).hrs=Math.max(0,round(+laborHrs.value||0,2));render();};
+  const laborRate=document.getElementById("laborRate");if(laborRate)laborRate.onchange=()=>{const wo=getWO();(wo.laborActual=wo.laborActual||{}).rate=Math.max(0,round(+laborRate.value||0,2));render();};
   const printCost=document.getElementById("printCost");if(printCost)printCost.onclick=()=>printCostReport(getWO());
   // production results document (attach when finalizing / marking complete)
   const resultsDrop=document.getElementById("resultsDrop"),resultsFile=document.getElementById("resultsFile");
