@@ -260,7 +260,7 @@ function makeWO(o){SEQ++;const wo={id:"WO"+SEQ,ref:o.ref||"",sku:o.sku,name:o.na
   hasBom:true,stage:1,status:"Draft",source:o.source||"manual",
   substitutions:{},committed:false,lotAssignments:null,finishedLot:"",
   results:{actualQty:o.qty,shrinkQty:0},producedQty:0,partiallyBuilt:false,closedShort:false,builds:[],
-  signedForm:"",signedReceived:false,signedDate:"",completed:false};
+  signedForm:"",signedReceived:false,signedDate:"",resultsDoc:"",resultsDocDate:"",completed:false};
   state.workOrders.push(wo);return wo;}
 // Allergens for a finished-good SKU (aggregated from its BOM) — used in the Forecasting table.
 function skuAllergens(sku){const a=NetSuite.getAssembly(sku);if(!a)return[];const set=new Set();
@@ -317,7 +317,7 @@ function statusTag(x){if(x.completed&&x.closedShort)return `<span class="tag war
   if(x.stage>=2)return `<span class="tag info">In Process</span>`;return `<span class="tag neutral">Draft</span>`;}
 function progPct(x){if(x.completed)return 100;if(x.producedQty>0)return Math.min(100,Math.round(x.producedQty/x.qty*100));return Math.round((x.stage-1)/5*100);}
 
-/* ---------- production management (work-order dashboard) ---------- */
+/* ---------- dashboard ---------- */
 function viewDashboard(){const w=state.workOrders;
   if(!w.length)return `<h2 class="page">Production Management</h2><p class="sub">No work orders yet.</p>
     <div class="panel"><div class="empty">Plan items in <strong>Forecasting &amp; Planning</strong>, or import / load a schedule.<br><br>
@@ -341,6 +341,7 @@ function viewDashboard(){const w=state.workOrders;
   const selDel=sel.filter(id=>{const x=w.find(y=>y.id===id);return x&&notStarted(x);});
   const bulkBar=sel.length?`<div class="banner info" style="display:flex;align-items:center;gap:12px">
     <strong>${sel.length} selected</strong>
+    <button class="btn ghost sm" id="bulkPrint">🖨 Print BOM (${sel.length})</button>
     <button class="btn primary sm" id="bulkDelete" ${selDel.length?'':'disabled'}>🗑 Delete ${selDel.length||''} unstarted</button>
     ${sel.length-selDel.length>0?`<span class="note">${sel.length-selDel.length} in-process can't be deleted</span>`:''}
     <button class="btn ghost sm" id="selClear" style="margin-left:auto">Clear</button></div>`:"";
@@ -368,6 +369,7 @@ function viewDashboard(){const w=state.workOrders;
       <div class="row" style="margin-bottom:10px;gap:6px"><span class="note" style="margin-right:4px">Build date:</span>
         ${fbtn("today","Today")}${fbtn("tomorrow","Tomorrow")}${fbtn("week","This week")}${fbtn("all","All")}${fbtn("custom","Range…")}
         ${range}<button class="btn ghost sm" id="saveView" title="Save the current date filter as a reusable view">💾 Save view</button>
+        <button class="btn ghost sm" id="printSched" title="Print the production schedule for this filtered view">🖨 Print schedule</button>
         <span class="note" style="margin-left:auto">${list.length} of ${w.length}</span></div>
       ${views?`<div class="row" style="margin-bottom:10px;gap:6px"><span class="note" style="margin-right:4px">Saved views:</span>${views}</div>`:""}
       ${bulkBar}
@@ -383,6 +385,7 @@ function viewDashboard(){const w=state.workOrders;
         <td>${statusTag(x)}</td>
         <td><div class="row" style="gap:6px;justify-content:flex-end">
           ${x.partiallyBuilt&&!x.completed?`<button class="btn ghost sm" data-markdone="${x.id}" title="Mark this partial build complete">✓ Complete</button>`:""}
+          <button class="btn ghost sm" data-printbom="${x.id}" title="Print production BOM">🖨</button>
           <button class="btn ghost sm" data-open="${x.id}">${x.completed?'View':'Open'}</button>
           ${notStarted(x)?`<button class="btn ghost sm" data-del="${x.id}" title="Delete — not started">🗑</button>`:""}
         </div></td>
@@ -654,22 +657,29 @@ function stage6(wo){const r=wo.results;const already=wo.producedQty||0;const thi
       <b>Finished lot</b><span><code class="mono">${esc(wo.finishedLot)}</code></span>
       <b>Consumed lots</b><span>${lotLines.map(esc).join("<br>")||"—"}</span>
       <b>Substitutions</b><span>${subs.length?subs.map(esc).join("<br>"):"none"}</span>
-      <b>Signed QA form</b><span>${wo.signedReceived?`✓ ${esc(wo.signedForm)} (${esc(wo.signedDate)})`:'<span class="tag warn">not received</span>'}</span></div>`;
+      <b>Signed QA form</b><span>${wo.signedReceived?`✓ ${esc(wo.signedForm)} (${esc(wo.signedDate)})`:'<span class="tag warn">not received</span>'}</span>
+      <b>Production results</b><span>${wo.resultsDoc?`✓ ${esc(wo.resultsDoc)} (${esc(wo.resultsDocDate)})`:'<span class="tag warn">not attached</span>'}</span></div>`;
   if(wo.completed)return `<div class="panel"><h3>6 · Build complete</h3>
     <div class="banner ok">✓ Build posted to NetSuite (mock). ${wo.closedShort?`Closed short at ${wo.producedQty} of ${wo.qty} ${esc(wo.uom)}.`:`Finished lot <code class="mono">${esc(wo.finishedLot)}</code> received (${wo.producedQty} ${esc(wo.uom)}).`}</div>
     ${summary}${buildsTable(wo)}<div class="row" style="margin-top:12px"><button class="btn primary" data-go="dashboard">Done — back to dashboard</button></div></div>`;
   // open WO: either first build, or partially built awaiting more
   if(wo.partiallyBuilt)return `<div class="panel"><h3>6 · Partial build recorded</h3>
     <div class="banner warn">Partially built: <strong>${already}</strong> of ${wo.qty} ${esc(wo.uom)} · <strong>${remaining}</strong> remaining. The work order stays open until closed.</div>
-    ${summary}${buildsTable(wo)}<div class="row" style="margin-top:12px">
+    ${summary}${buildsTable(wo)}${resultsDocBlock(wo)}<div class="row" style="margin-top:12px">
       <button class="btn primary" id="buildMore">+ Record another build (${remaining} ${esc(wo.uom)})</button>
       <button class="btn ghost" id="markDoneWO">✓ Mark complete (accept ${already} as final)</button>
       <button class="btn ghost" id="closeShort">Close short</button></div></div>`;
   return `<div class="panel"><h3>6 · Finalize &amp; process build</h3>
     <div class="banner info">Producing <strong>${thisB}</strong> ${esc(wo.uom)} this build${remaining>0?` (planned ${wo.qty}; ${remaining} would remain after).`:` — completes the work order.`} Posting consumes component lots and receives the finished lot.</div>
-    ${summary}
-    <div class="banner info" style="margin-top:14px">On finalize (live): <code class="mono">assemblybuild</code> created · component lots consumed · <strong>Signed Copy Received</strong> set via API · scanned form attached via the browser connector.</div>
+    ${summary}${resultsDocBlock(wo)}
+    <div class="banner info" style="margin-top:14px">On finalize (live): <code class="mono">assemblybuild</code> created · component lots consumed · <strong>Signed Copy Received</strong> set via API · results document attached via the browser connector.</div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="processBuild">✓ Process this build</button><button class="btn ghost" data-adv="5">← Back</button></div></div>`;}
+// Optional results-document attachment shown when finalizing / marking complete.
+function resultsDocBlock(wo){return `<div class="panel" style="background:var(--soft);margin-top:12px"><h3>Production results document <span class="note" style="font-weight:400">(optional)</span></h3>
+    <p class="note">Attach the documented production results — yield/run sheet, QA report, or a photo — to file with the completed build.</p>
+    <div class="drop" id="resultsDrop" style="padding:18px"><p style="margin:0">📎 ${wo.resultsDoc?esc(wo.resultsDoc):"Drop or click to attach results document (PDF/JPG)"}</p>
+      <input type="file" id="resultsFile" style="display:none"></div>
+    ${wo.resultsDoc?`<div class="banner ok" style="margin-top:10px">✓ Attached ${esc(wo.resultsDoc)} ${esc(wo.resultsDocDate)} <a href="#" id="resultsClear">remove</a></div>`:""}</div>`;}
 function buildsTable(wo){if(!wo.builds.length)return "";
   return `<div class="panel" style="background:var(--soft);margin-top:12px"><h3>Build log</h3>
     <table><thead><tr><th>#</th><th>Qty</th><th>Finished lot</th><th>Date</th></tr></thead>
@@ -687,11 +697,23 @@ function travelerHTML(wo){const comps=effectiveComponents(wo);const allerg=woAll
     <div class="kv" style="margin:12px 0"><b>Finished lot</b><span>${wo.finishedLot||"________"}</span></div>
     <table><thead><tr><th>Component</th><th>Description</th><th>Required</th><th>Lot(s)</th><th>Actual used</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="row" style="margin-top:18px;gap:40px"><div>Operator: ____________________</div><div>QA: ____________________</div><div>Date: __________</div></div></div>`;}
-function printTraveler(wo){const w=window.open("","_blank");
-  w.document.write(`<html><head><title>${wo.id} Production Order</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
-   .note{color:#666;font-size:12px}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}th,td{border:1px solid #ccc;padding:7px;text-align:left}
+function printDoc(title,inner){const w=window.open("","_blank");
+  w.document.write(`<html><head><title>${esc(title)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+   h1{font-size:18px;margin:0}.note{color:#666;font-size:11px}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}th,td{border:1px solid #ccc;padding:7px;text-align:left}th{background:#f3f3f3}
    .spread{display:flex;justify-content:space-between}.kv b{color:#666;margin-right:8px}</style></head>
-   <body>${travelerHTML(wo).replace(/var\(--line\)/g,'#ccc')}<script>window.print()<\/script></body></html>`);w.document.close();}
+   <body>${inner}<script>window.print()<\/script></body></html>`);w.document.close();}
+// Print one or many production BOMs (travelers), one per page.
+function printTravelers(wos){if(!wos.length)return;
+  const inner=wos.map(wo=>travelerHTML(wo).replace(/var\(--line\)/g,'#ccc')).join('<div style="page-break-after:always;height:0"></div>');
+  printDoc("Production BOM",inner);}
+function printTraveler(wo){printTravelers([wo]);}
+// Print the production schedule for the currently filtered Production Management view.
+function printSchedule(){const w=state.workOrders.filter(inDateFilter);const f=state.dateFilter;
+  const label=f.mode==="custom"?`${f.from||"…"} to ${f.to||"…"}`:({today:"Today",tomorrow:"Tomorrow",week:"This week",all:"All dates"}[f.mode]||f.mode);
+  const rows=w.map(x=>`<tr><td>${esc(x.id)}<br><span class="note">${esc(x.ref)}</span></td><td>${esc(x.name)}<br><span class="note">${esc(x.sku)}</span></td><td>${x.qty} ${esc(x.uom)}</td><td>${esc(x.buildDate)}</td><td>${esc(x.location)}</td><td>${esc(woAllergens(x).join(", ")||"—")}</td><td>${x.completed?(x.closedShort?"Closed (short)":"Built"):(x.partiallyBuilt?"Partially Built":(x.stage>=2?"In Process":"Draft"))}</td></tr>`).join("")||'<tr><td colspan="7">No work orders in this view.</td></tr>';
+  const inner=`<h1>Vic's Foods — Production Schedule</h1><div class="note">View: ${esc(label)} · ${w.length} work order(s) · printed ${esc(today())}</div>
+    <table><thead><tr><th>WO</th><th>Finished good</th><th>Qty</th><th>Build date</th><th>Location</th><th>Allergens</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+  printDoc("Production Schedule",inner);}
 
 /* ---------- wiring ---------- */
 function wire(){
@@ -706,13 +728,17 @@ function wire(){
   document.querySelectorAll("[data-applyview]").forEach(b=>b.onclick=()=>applyView(+b.dataset.applyview));
   document.querySelectorAll("[data-delview]").forEach(b=>b.onclick=()=>delView(+b.dataset.delview));
 
-  // production management selection / mass delete
+  // dashboard selection / mass delete
   document.querySelectorAll("[data-selrow]").forEach(c=>c.onchange=()=>{const id=c.dataset.selrow;const i=state.selected.indexOf(id);
     if(c.checked&&i<0)state.selected.push(id);else if(!c.checked&&i>=0)state.selected.splice(i,1);render();});
   const selAll=document.getElementById("selAll");if(selAll)selAll.onchange=()=>{const vis=state.workOrders.filter(inDateFilter);
     if(selAll.checked)vis.forEach(x=>{if(!state.selected.includes(x.id))state.selected.push(x.id);});
     else{const ids=vis.map(x=>x.id);state.selected=state.selected.filter(s=>!ids.includes(s));}render();};
   const selClear=document.getElementById("selClear");if(selClear)selClear.onclick=()=>{state.selected=[];render();};
+  // print production BOM(s) and schedule
+  document.querySelectorAll("[data-printbom]").forEach(b=>b.onclick=()=>{const wo=state.workOrders.find(x=>x.id===b.dataset.printbom);if(wo)printTravelers([wo]);});
+  const bulkPrint=document.getElementById("bulkPrint");if(bulkPrint)bulkPrint.onclick=()=>{const wos=state.selected.map(id=>state.workOrders.find(x=>x.id===id)).filter(Boolean);printTravelers(wos);};
+  const printSched=document.getElementById("printSched");if(printSched)printSched.onclick=()=>printSchedule();
   const bulkDelete=document.getElementById("bulkDelete");if(bulkDelete)bulkDelete.onclick=()=>{
     const targets=state.selected.filter(id=>{const x=state.workOrders.find(y=>y.id===id);return x&&notStarted(x);});
     if(!targets.length)return;if(!confirm(`Delete ${targets.length} unstarted work order(s)? This cannot be undone.`))return;
@@ -777,6 +803,11 @@ function wire(){
   const formDrop=document.getElementById("formDrop"),formFile=document.getElementById("formFile");
   if(formDrop){formDrop.onclick=()=>formFile.click();
     formFile.onchange=e=>{const f=e.target.files[0];if(f){const wo=getWO();wo.signedForm=f.name;wo.signedReceived=true;wo.signedDate=today();toast("Signed form attached");render();}};}
+  // production results document (attach when finalizing / marking complete)
+  const resultsDrop=document.getElementById("resultsDrop"),resultsFile=document.getElementById("resultsFile");
+  if(resultsDrop){resultsDrop.onclick=()=>resultsFile.click();
+    resultsFile.onchange=e=>{const f=e.target.files[0];if(f){const wo=getWO();wo.resultsDoc=f.name;wo.resultsDocDate=today();toast("Results document attached");render();}};}
+  const resultsClear=document.getElementById("resultsClear");if(resultsClear)resultsClear.onclick=e=>{e.preventDefault();const wo=getWO();wo.resultsDoc="";wo.resultsDocDate="";render();};
   const proc=document.getElementById("processBuild");if(proc)proc.onclick=()=>{processBuild(getWO());toast("Build posted to NetSuite (mock)");};
   const buildMore=document.getElementById("buildMore");if(buildMore)buildMore.onclick=()=>{const wo=getWO();wo.partiallyBuilt=false;wo.stage=5;
     wo.results.actualQty=round(wo.qty-wo.producedQty,2);wo.results.shrinkQty=0;render();};
@@ -805,7 +836,7 @@ function wire(){
   const traceClear=document.getElementById("traceClear");if(traceClear)traceClear.onclick=()=>{state.traceQuery="";render();};
 }
 function readFile(f){const r=new FileReader();r.onload=e=>{try{ingestUpload(parseCSV(e.target.result));}catch(err){toast("Parse error: "+err.message);}};r.readAsText(f);}
-function dlTemplate(){const b=new Blob([SAMPLE_CSV.split("\n")[0]+"\n"],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.click();}
+function dlTemplate(){const b=new Blob([SAMPLE_CSV.split("\n")[0]+"\n"],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="production-orders-template.csv";a.click();}
 render();
 </script>
 </body>
